@@ -521,7 +521,14 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 
 // ---------- 启动 ----------
 function render() { if (cur) renderRoute(); else renderHome(); }
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+// App 本身更新：切回 App 时检查 sw.js；新版接管后自动重新载入（进度都在本机存着，不会丢）
+if ("serviceWorker" in navigator) {
+  const had = !!navigator.serviceWorker.controller; let reloading = false;
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((reg) => {
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update().catch(() => {}); });
+  }).catch(() => {});
+  navigator.serviceWorker.addEventListener("controllerchange", () => { if (had && !reloading) { reloading = true; location.reload(); } });
+}
 (async () => {
   if (base) goHome();
   await checkUpdate();

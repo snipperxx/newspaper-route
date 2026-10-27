@@ -1,5 +1,5 @@
 // 离线缓存：App 本身先用缓存；路线数据先联网（拿最新），没网用缓存；地图瓦片看过的存下来
-const V = "songbao2-v3";
+const V = "songbao2-v4";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js",
