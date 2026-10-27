@@ -45,6 +45,7 @@ header button{padding:6px 10px}
 .me{width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 2px #2563eb55}
 .mapbtns{position:absolute;right:10px;top:10px;z-index:800;display:flex;flex-direction:column;gap:8px}
 .mapbtns button{padding:8px 10px;box-shadow:0 1px 4px #0003}
+#bNorth{color:#dc2626;font-size:14px}#nArrow{display:inline-block;transition:transform .1s}
 #sheet{background:var(--card);border-top:1px solid var(--line);padding:12px 12px max(12px,env(safe-area-inset-bottom));max-height:52vh;overflow:auto}
 .addr{font-size:22px;font-weight:800;display:flex;align-items:baseline;gap:8px}
 .addr .n{color:var(--cur)}
@@ -125,7 +126,7 @@ input,select,textarea{font:inherit;width:100%;padding:8px 10px;border:1px solid 
   <header><button id="rBack">◀</button><h1 id="rTitle"></h1><span id="rProg" class="muted"></span><button id="rMode">列表</button></header>
   <div id="mapView" style="flex:1;display:flex;flex-direction:column;min-height:0">
     <div style="position:relative;flex:1;display:flex;min-height:0"><div id="map"></div>
-      <div class="mapbtns"><button id="bFit" title="看我和下一站">◎</button><button id="bAll" title="看全区">▦</button></div></div>
+      <div class="mapbtns"><button id="bNorth" title="转回正北"><span id="nArrow">▲</span></button><button id="bFit" title="看我和下一站">◎</button><button id="bAll" title="看全区">▦</button></div></div>
     <div id="sheet"></div>
   </div>
   <div id="listView" class="hide" style="flex:1;display:flex;flex-direction:column;min-height:0">
@@ -143,6 +144,7 @@ input,select,textarea{font:inherit;width:100%;padding:8px 10px;border:1px solid 
 <div id="toast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
 <script>
 "use strict";
 // ---------- 存储 ----------
@@ -272,10 +274,14 @@ function setView(v) {
   renderRoute();
 }
 function initMap() {
-  map = L.map("map", { zoomControl: false, attributionControl: true }).setView([47.677, 9.188], 16);
+  map = L.map("map", { zoomControl: false, attributionControl: true, rotate: true, touchRotate: true, rotateControl: false, bearing: LS.get("bearing", 0) }).setView([47.677, 9.188], 16);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
   layers.all = L.layerGroup().addTo(map); layers.leg = L.layerGroup().addTo(map); layers.pins = L.layerGroup().addTo(map);
   map.on("dragstart", () => (follow = false));
+  // 两指可以转地图；角度记住，下次打开还是这个方向。红箭头指北，点一下转回正北
+  const north = () => { $("#nArrow").style.transform = `rotate(${-map.getBearing()}deg)`; };
+  map.on("rotate", north); map.on("moveend", () => LS.set("bearing", map.getBearing())); north();
+  $("#bNorth").onclick = () => { map.setBearing(0); LS.set("bearing", 0); };
   $("#bFit").onclick = () => { follow = true; fitCur(); };
   $("#bAll").onclick = () => { follow = false; const d = district(cur); map.fitBounds(L.latLngBounds(d.stops.map((s) => s.ll).concat([d.pickup.ll])), { padding: [30, 30] }); };
 }
