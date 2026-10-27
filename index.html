@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f2937">
+<title>送报路线</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--fg:#111827;--mute:#6b7280;--line:#e5e7eb;--acc:#2563eb;--ok:#16a34a;--warn:#dc2626;--cur:#ea580c}
+:root[data-theme=dark]{--bg:#0b0f17;--card:#161b26;--fg:#e5e7eb;--mute:#9ca3af;--line:#273043;--acc:#60a5fa;--ok:#22c55e;--warn:#f87171;--cur:#fb923c}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans SC",sans-serif;overscroll-behavior:none}
+button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;cursor:pointer}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+button:disabled{opacity:.4}
+.hide{display:none!important}
+header{position:sticky;top:0;z-index:1000;display:flex;align-items:center;gap:8px;padding:10px 12px;padding-top:max(10px,env(safe-area-inset-top));background:var(--card);border-bottom:1px solid var(--line)}
+header h1{font-size:18px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header button{padding:6px 10px}
+.wrap{padding:12px;max-width:640px;margin:0 auto}
+.datebar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+.datebar b{font-size:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px}
+.dcard{display:flex;align-items:center;gap:12px}
+.dcard .num{font-size:28px;font-weight:800;min-width:56px}
+.dcard .meta{flex:1;min-width:0}
+.dcard .meta small{color:var(--mute);display:block}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--ok)}
+.off{opacity:.55}
+.muted{color:var(--mute);font-size:14px}
+/* 路线页 */
+#route{position:fixed;inset:0;display:flex;flex-direction:column;background:var(--bg);z-index:900}
+#map{flex:1;min-height:200px}
+:root[data-theme=dark] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9)}
+.leaflet-container{background:var(--bg)}
+.pin{width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;background:#1f2937;color:#fff;font:700 12px/22px system-ui;text-align:center;border:2px solid #fff;box-shadow:0 1px 3px #0006}
+.pin.done{background:#9ca3af;opacity:.7}
+.pin.cur{background:var(--cur);width:38px;height:38px;margin:-19px 0 0 -19px;font-size:16px;line-height:34px;z-index:1000!important}
+.pin.pick{background:#15803d}
+.pin.end{background:#7c3aed}
+.me{width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 2px #2563eb55}
+.mapbtns{position:absolute;right:10px;top:10px;z-index:800;display:flex;flex-direction:column;gap:8px}
+.mapbtns button{padding:8px 10px;box-shadow:0 1px 4px #0003}
+#sheet{background:var(--card);border-top:1px solid var(--line);padding:12px 12px max(12px,env(safe-area-inset-bottom));max-height:52vh;overflow:auto}
+.addr{font-size:22px;font-weight:800;display:flex;align-items:baseline;gap:8px}
+.addr .n{color:var(--cur)}
+.dist{color:var(--mute);font-size:14px;font-weight:600}
+.dist.near{color:var(--ok)}
+.rec{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed var(--line)}
+.rec:last-child{border-bottom:0}
+.rec .nm{flex:1;min-width:0}
+.rec .note{color:var(--warn);font-size:14px;display:block}
+.pp{display:inline-block;min-width:38px;text-align:center;padding:2px 6px;border-radius:6px;font:700 13px system-ui;color:#fff;background:#2563eb}
+.pp.SZ{background:#ea580c}.pp.FAZ{background:#7c3aed}.pp.FAS{background:#db2777}.pp.taz{background:#16a34a}
+.pp.BI{background:#0d9488}.pp.HDB{background:#92400e}.pp.NZZ{background:#b91c1c}.pp.WLT,.pp.WES{background:#0891b2}.pp.X{background:#4b5563}
+.cnt{font-weight:800;color:var(--warn)}
+.tag{font-size:12px;border:1px solid var(--mute);color:var(--mute);border-radius:4px;padding:0 4px}
+.other{color:var(--mute);font-size:13px;margin-top:6px}
+.slide{position:relative;height:56px;border-radius:28px;background:var(--ok);margin:12px 0 8px;user-select:none;touch-action:none;overflow:hidden}
+.slide span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;letter-spacing:1px}
+.slide .th{position:absolute;left:4px;top:4px;width:48px;height:48px;border-radius:24px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--ok);box-shadow:0 1px 4px #0004}
+.row3{display:flex;gap:8px}.row3 button{flex:1;padding:10px 6px}
+/* 列表 */
+#list{flex:1;overflow:auto;padding:8px 10px 80px}
+.li{position:relative;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:6px;touch-action:pan-y;overflow:hidden}
+.li .in{display:flex;gap:10px;align-items:flex-start;padding:10px;background:var(--card);position:relative;transition:transform .15s}
+.li .bg{position:absolute;inset:0;background:var(--ok);color:#fff;display:flex;align-items:center;padding-left:16px;font-weight:700}
+.li .k{font-weight:800;min-width:28px;color:var(--mute)}
+.li.isdone .in{opacity:.45}
+.li.isdone .a{text-decoration:line-through}
+.li.iscur{border-color:var(--cur);box-shadow:0 0 0 2px var(--cur)}
+.li.nottoday .in{opacity:.4}
+.li .a{font-weight:700}
+.li .body{flex:1;min-width:0}
+.li .ed{padding:4px 10px}
+.listtools{display:flex;gap:8px;padding:8px 10px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.listtools button{padding:6px 10px;font-size:14px}
+.mv{display:flex;flex-direction:column;gap:4px}.mv button{padding:2px 10px}
+/* 对话框 */
+dialog{border:0;border-radius:16px;padding:0;width:min(560px,94vw);max-height:90vh;background:var(--card);color:var(--fg)}
+dialog[open]{display:flex;flex-direction:column}
+dialog::backdrop{background:#0008}
+dialog .dh{padding:14px 16px;border-bottom:1px solid var(--line);font-weight:800;display:flex;justify-content:space-between;align-items:center}
+dialog .db{padding:12px 16px;overflow:auto;flex:1;min-height:0}
+dialog .df{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+label{display:block;font-size:13px;color:var(--mute);margin:8px 0 2px}
+input,select,textarea{font:inherit;width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+.days{display:flex;gap:4px}.days label{margin:0;display:flex;flex-direction:column;align-items:center;color:var(--fg);font-size:13px}.days input{width:auto}
+.rbox{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:8px 0}
+.grid2{display:grid;grid-template-columns:1fr 90px 70px;gap:8px}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111827;color:#fff;padding:10px 16px;border-radius:10px;z-index:3000;font-size:14px;max-width:90vw;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.on{opacity:1}
+.done-box{text-align:center;padding:10px 0}
+.done-box b{font-size:22px;color:var(--ok)}
+</style>
+</head>
+<body>
+<!-- 解锁 -->
+<div id="unlock" class="wrap hide">
+  <div class="card">
+    <h2 style="margin-top:0">送报路线</h2>
+    <p class="muted">路线数据是加密的。输入一次密码，以后这台手机会记住。</p>
+    <input id="pw" type="password" autocomplete="current-password" placeholder="密码">
+    <p id="pwerr" class="muted" style="color:var(--warn)"></p>
+    <button class="pri" id="pwok" style="width:100%">解锁</button>
+  </div>
+</div>
+
+<!-- 首页 -->
+<div id="home" class="hide">
+  <header><h1>送报路线</h1><button id="btnTheme" title="深色/浅色">🌙</button><button id="btnSet" title="设置">⚙️</button></header>
+  <div class="wrap">
+    <div class="datebar"><button id="dPrev">◀</button><div style="text-align:center"><b id="dLbl"></b><div id="dSub" class="muted"></div></div><button id="dNext">▶</button></div>
+    <div id="dlist"></div>
+    <p id="verLbl" class="muted" style="text-align:center"></p>
+  </div>
+</div>
+
+<!-- 路线页 -->
+<div id="route" class="hide">
+  <header><button id="rBack">◀</button><h1 id="rTitle"></h1><span id="rProg" class="muted"></span><button id="rMode">列表</button></header>
+  <div id="mapView" style="flex:1;display:flex;flex-direction:column;min-height:0">
+    <div style="position:relative;flex:1;display:flex;min-height:0"><div id="map"></div>
+      <div class="mapbtns"><button id="bFit" title="看我和下一站">◎</button><button id="bAll" title="看全区">▦</button></div></div>
+    <div id="sheet"></div>
+  </div>
+  <div id="listView" class="hide" style="flex:1;display:flex;flex-direction:column;min-height:0">
+    <div class="listtools"><button id="lHide">隐藏已送</button><button id="lAll">显示今天不送的</button><button id="lSort">调整顺序</button><button id="lAdd">＋ 加一站</button></div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<!-- 编辑 -->
+<dialog id="dEdit"><div class="dh"><span id="eTitle">编辑</span><button data-close>✕</button></div><div class="db" id="eBody"></div>
+  <div class="df"><button id="eDel" style="margin-right:auto;color:var(--warn)">删除这一站</button><button data-close>取消</button><button class="pri" id="eSave">保存</button></div></dialog>
+<!-- 设置 -->
+<dialog id="dSet"><div class="dh"><span>设置</span><button data-close>✕</button></div><div class="db" id="sBody"></div>
+  <div class="df"><button data-close>关闭</button></div></dialog>
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+"use strict";
+// ---------- 存储 ----------
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem("sb2." + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("sb2." + k, JSON.stringify(v)); } catch (e) { toast("手机存储满了，保存失败"); } },
+  del(k) { try { localStorage.removeItem("sb2." + k); } catch (e) {} },
+};
+const $ = (s) => document.querySelector(s);
+const h = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function toast(t, ms = 2200) { const e = $("#toast"); e.textContent = t; e.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.remove("on"), ms); }
+const WD = ["日", "一", "二", "三", "四", "五", "六"];
+const PAPERS = ["K", "SZ", "FAZ", "FAS", "taz", "BI", "HDB", "NZZ", "WLT", "WES", "STG"];
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+let base = LS.get("base", null);   // 我发布的数据（解密后）
+let patch = LS.get("patch", {});   // 手机上自己改的：{区: {order, stops, del, add}}
+let date = new Date(); date.setHours(12, 0, 0, 0);
+let cur = null;                    // 当前打开的区 id
+let view = "map", hideDone = LS.get("hideDone", false), showAll = false, sorting = false;
+
+// ---------- 主题 ----------
+function applyTheme() {
+  const t = LS.get("theme", null) || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.dataset.theme = t; $("#btnTheme").textContent = t === "dark" ? "☀️" : "🌙";
+}
+$("#btnTheme").onclick = () => { LS.set("theme", document.documentElement.dataset.theme === "dark" ? "light" : "dark"); applyTheme(); };
+applyTheme();
+
+// ---------- 解密 + 更新 ----------
+const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+async function decrypt(enc, pw) {
+  const k0 = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveKey"]);
+  const k = await crypto.subtle.deriveKey({ name: "PBKDF2", salt: b64(enc.salt), iterations: 200000, hash: "SHA-256" }, k0, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(enc.iv) }, k, b64(enc.ct));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+async function checkUpdate(manual) {
+  let enc;
+  try { const r = await fetch("data.enc.json?t=" + Date.now(), { cache: "no-store" }); if (!r.ok) throw 0; enc = await r.json(); }
+  catch (e) { if (manual) toast("没网，用的是手机上的旧数据"); return; }
+  if (base && base.v === enc.v) { if (manual) toast("已经是最新数据（" + enc.v + "）"); return; }
+  const pw = LS.get("pw", null);
+  if (!pw) { showUnlock(enc); return; }
+  try {
+    const old = base && base.v; base = await decrypt(enc, pw); LS.set("base", base);
+    if (old) toast("路线数据已更新到 " + base.v, 3500);
+    render();
+  } catch (e) { LS.del("pw"); showUnlock(enc, "密码不对（可能换了密码），请重新输入"); }
+}
+function showUnlock(enc, err) {
+  ["#home", "#route"].forEach((s) => $(s).classList.add("hide")); $("#unlock").classList.remove("hide");
+  $("#pwerr").textContent = err || "";
+  $("#pwok").onclick = async () => {
+    const pw = $("#pw").value.trim(); if (!pw) return;
+    try { base = await decrypt(enc, pw); LS.set("pw", pw); LS.set("base", base); $("#unlock").classList.add("hide"); goHome(); }
+    catch (e) { $("#pwerr").textContent = "密码不对"; }
+  };
+}
+
+// ---------- 数据：基础 + 本机修改 ----------
+const P = (id) => (patch[id] = patch[id] || { order: null, stops: {}, del: {}, add: {} });
+function savePatch() { LS.set("patch", patch); }
+function district(id) {
+  const d = base.districts.find((x) => x.id === id); if (!d) return null;
+  const p = patch[id] || { stops: {}, del: {}, add: {} };
+  let list = [];
+  const pushAdds = (after) => Object.values(p.add || {}).filter((a) => a.after === after).forEach((a) => { list.push(a.stop); pushAdds(a.stop.id); });
+  pushAdds(null);
+  d.stops.forEach((s) => { if (!(p.del || {})[s.id]) list.push((p.stops || {})[s.id] || s); pushAdds(s.id); });
+  if (p.order) {
+    const byId = Object.fromEntries(list.map((s) => [s.id, s])), res = p.order.map((i) => byId[i]).filter(Boolean);
+    list.forEach((s, i) => { if (!p.order.includes(s.id)) { const prev = list.slice(0, i).reverse().find((x) => res.includes(x)); res.splice(prev ? res.indexOf(prev) + 1 : 0, 0, s); } });
+    list = res;
+  }
+  return { ...d, stops: list, baseIdx: Object.fromEntries(d.stops.map((s, i) => [s.id, i])) };
+}
+const wday = () => date.getDay(); // 0 = 周日
+const recToday = (r, wd) => !r.paused && r.days.includes(wd);
+const stopToday = (s, wd) => s.r.some((r) => recToday(r, wd));
+function activeOn(d) { const t = iso(date); return (!d.from || d.from <= t) && (!d.to || t <= d.to); }
+const progKey = (id) => "prog." + iso(date) + "." + id;
+const prog = (id) => LS.get(progKey(id), { done: [], cur: null, t0: null, t1: null });
+const setProg = (id, p) => LS.set(progKey(id), p);
+
+// ---------- 首页 ----------
+function goHome() { cur = null; releaseWake(); $("#route").classList.add("hide"); $("#home").classList.remove("hide"); renderHome(); }
+function renderHome() {
+  const wd = wday();
+  $("#dLbl").textContent = `${date.getMonth() + 1}月${date.getDate()}日 周${WD[wd]}`;
+  $("#dSub").textContent = iso(date) === iso(new Date()) ? "今天" : "（不是今天）";
+  const ds = base.districts;
+  $("#dlist").innerHTML = wd === 0 ? `<div class="card muted">周日不送报。用 ◀ ▶ 换一天看。</div>` : "" +
+    ds.map((d0) => {
+      const d = district(d0.id), on = activeOn(d), todays = d.stops.filter((s) => stopToday(s, wd)), pr = prog(d.id);
+      const n = todays.length, k = todays.filter((s) => pr.done.includes(s.id)).length;
+      const papers = todays.reduce((a, s) => a + s.r.filter((r) => recToday(r, wd)).reduce((b, r) => b + r.n, 0), 0);
+      const mins = pr.t0 && pr.t1 ? Math.round((pr.t1 - pr.t0) / 60000) : null;
+      const range = d.from || d.to ? `${(d.from || "").slice(5)} – ${(d.to || "").slice(5)}` : "固定区";
+      return `<div class="card dcard ${on ? "" : "off"}" data-open="${h(d.id)}">
+        <div class="num">${h(d.id)}</div>
+        <div class="meta"><b>${h(d.title)}</b><small>${on ? `${n} 站 · ${papers} 份 · ${range}` : `不在代班日期内（${range}），可以先看`}</small>
+        <div class="bar"><i style="width:${n ? (k / n) * 100 : 0}%"></i></div>
+        <small>${k}/${n} 已送${mins != null ? ` · 用时 ${mins} 分钟` : ""}${Object.keys(patch[d.id]?.stops || {}).length + Object.keys(patch[d.id]?.add || {}).length + Object.keys(patch[d.id]?.del || {}).length || patch[d.id]?.order ? " · 有本机修改" : ""}</small></div>
+        <button class="pri">${k === 0 ? "开始" : k < n ? "继续" : "查看"}</button></div>`;
+    }).join("");
+  $("#dlist").querySelectorAll("[data-open]").forEach((e) => (e.onclick = () => openDistrict(e.dataset.open)));
+  $("#verLbl").textContent = "数据版本 " + base.v;
+}
+$("#dPrev").onclick = () => { date.setDate(date.getDate() - 1); renderHome(); };
+$("#dNext").onclick = () => { date.setDate(date.getDate() + 1); renderHome(); };
+
+// ---------- 路线页 ----------
+let map, layers = {}, me = null, follow = true;
+function openDistrict(id) {
+  cur = id; $("#home").classList.add("hide"); $("#route").classList.remove("hide");
+  if (!map) initMap();
+  setView(view); requestWake(); startGPS();
+  renderRoute(true);
+}
+$("#rBack").onclick = () => goHome();
+$("#rMode").onclick = () => setView(view === "map" ? "list" : "map");
+function setView(v) {
+  view = v; $("#mapView").classList.toggle("hide", v !== "map"); $("#listView").classList.toggle("hide", v !== "list");
+  $("#rMode").textContent = v === "map" ? "列表" : "地图";
+  if (v === "map" && map) setTimeout(() => { map.invalidateSize(); fitCur(); }, 50);
+  renderRoute();
+}
+function initMap() {
+  map = L.map("map", { zoomControl: false, attributionControl: true }).setView([47.677, 9.188], 16);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+  layers.all = L.layerGroup().addTo(map); layers.leg = L.layerGroup().addTo(map); layers.pins = L.layerGroup().addTo(map);
+  map.on("dragstart", () => (follow = false));
+  $("#bFit").onclick = () => { follow = true; fitCur(); };
+  $("#bAll").onclick = () => { follow = false; const d = district(cur); map.fitBounds(L.latLngBounds(d.stops.map((s) => s.ll).concat([d.pickup.ll])), { padding: [30, 30] }); };
+}
+function state() {
+  const d = district(cur), wd = wday(), pr = prog(cur);
+  const todays = d.stops.filter((s) => stopToday(s, wd));
+  let c = todays.find((s) => s.id === pr.cur && !pr.done.includes(s.id)) || todays.find((s) => !pr.done.includes(s.id)) || null;
+  return { d, wd, pr, todays, c, ci: c ? todays.indexOf(c) : todays.length };
+}
+// 从 a 到 b 的路线：基础顺序里 a 在 b 前面就拼接中间各段，否则画直线（顺序被改过）
+function pathBetween(d, a, b) {
+  const ia = a === "@pick" ? -1 : d.baseIdx[a], ib = b === "@end" ? d.legs.length - 1 : d.baseIdx[b];
+  if (ia != null && ib != null && ia < ib) return { pts: d.legs.slice(ia + 1, ib + 1).flat(), real: true };
+  return null;
+}
+function renderRoute(fit) {
+  if (!cur) return;
+  const { d, wd, pr, todays, c, ci } = state();
+  $("#rTitle").textContent = d.title; $("#rProg").textContent = `${pr.done.filter((id) => todays.some((s) => s.id === id)).length}/${todays.length}`;
+  if (view === "map") renderMap(d, wd, pr, todays, c, ci, fit); else renderList(d, wd, pr, todays, c);
+}
+function renderMap(d, wd, pr, todays, c, ci, fit) {
+  layers.all.clearLayers(); layers.leg.clearLayers(); layers.pins.clearLayers();
+  L.polyline(d.legs.flat(), { color: "#6b7280", weight: 4, opacity: .35 }).addTo(layers.all);
+  const pin = (ll, txt, cls, z) => L.marker(ll, { icon: L.divIcon({ className: "", html: `<div class="pin ${cls}">${txt}</div>`, iconSize: [0, 0] }), zIndexOffset: z || 0, keyboard: false });
+  pin(d.pickup.ll, "取", "pick").addTo(layers.pins);
+  pin(d.end.ll, "终", "end").addTo(layers.pins);
+  todays.forEach((s, i) => { const m = pin(s.ll, i + 1, s === c ? "cur" : pr.done.includes(s.id) ? "done" : "", s === c ? 1000 : 0).addTo(layers.pins); m.on("click", () => { pr.cur = s.id; setProg(cur, pr); renderRoute(true); }); });
+  // 当前这一段
+  const prev = ci > 0 ? todays[ci - 1].id : "@pick", target = c ? c.id : "@end";
+  const p = pathBetween(d, prev, target), tll = c ? c.ll : d.end.ll;
+  const from = prev === "@pick" ? d.pickup.ll : todays[ci - 1].ll;
+  if (p) L.polyline(p.pts, { color: "#2563eb", weight: 7, opacity: .9 }).addTo(layers.leg);
+  else L.polyline([from, tll], { color: "#2563eb", weight: 5, dashArray: "8 8" }).addTo(layers.leg);
+  if (me) me.addTo(layers.pins);
+  renderSheet(d, wd, pr, todays, c, ci);
+  if (fit || follow) fitCur();
+}
+function fitCur() {
+  if (!cur || view !== "map") return;
+  const { d, todays, c, ci } = state();
+  const pts = [c ? c.ll : d.end.ll, ci > 0 ? todays[ci - 1].ll : d.pickup.ll];
+  if (gps) pts.push([gps.lat, gps.lon]);
+  map.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 18 });
+}
+function recHTML(r, wd) {
+  return `<div class="rec"><span class="pp ${PAPERS.includes(r.paper) ? h(r.paper) : "X"}">${h(r.paper)}</span>${r.n > 1 ? `<span class="cnt">×${r.n}</span>` : ""}
+    <span class="nm">${h(r.name)} ${r.tag ? `<span class="tag">${h(r.tag)}</span>` : ""}${r.note ? `<span class="note">${h(r.note)}</span>` : ""}</span></div>`;
+}
+const dayTxt = (r) => (r.paused ? "停送" : r.days.length === 6 ? "每天" : "只周" + r.days.map((x) => WD[x]).join(""));
+function renderSheet(d, wd, pr, todays, c, ci) {
+  const el = $("#sheet");
+  if (wd === 0) { el.innerHTML = `<div class="done-box muted">周日不送报</div>`; return; }
+  if (!c) {
+    const mins = pr.t0 && pr.t1 ? Math.round((pr.t1 - pr.t0) / 60000) : null;
+    const next = base.districts.map((x) => district(x.id)).find((x) => x.id !== cur && activeOn(x) && x.stops.some((s) => stopToday(s, wd)) && x.stops.filter((s) => stopToday(s, wd)).some((s) => !prog(x.id).done.includes(s.id)));
+    el.innerHTML = `<div class="done-box"><b>✓ ${h(d.id)} 送完了</b><p class="muted">${todays.length} 站${mins != null ? ` · 用时 ${mins} 分钟` : ""} · 下一步：${h(d.end.label)}（${h(d.end.addr)}）</p>
+      ${next ? `<button class="pri" id="goNext" style="width:100%">去 ${h(next.id)} 区</button>` : `<button id="goHome" style="width:100%">回首页</button>`}
+      <div class="row3" style="margin-top:8px"><button id="bUndo">◀ 撤销最后一站</button><button id="bNav">导航到终点</button></div></div>`;
+    if (next) $("#goNext").onclick = () => openDistrict(next.id); else $("#goHome").onclick = goHome;
+    $("#bUndo").onclick = undoLast; $("#bNav").onclick = () => nav(d.end.ll);
+    return;
+  }
+  const rt = c.r.filter((r) => recToday(r, wd)), ro = c.r.filter((r) => !recToday(r, wd));
+  const start = ci === 0 && !pr.done.length ? `<div class="muted" style="margin-bottom:6px">先到取报点：<b>${h(d.pickup.addr)}</b>（${h(d.pickup.note)}）${d.reserve ? `，备用报 ${d.reserve} 份` : ""}</div>` : "";
+  el.innerHTML = `${start}<div class="addr"><span class="n">${ci + 1}</span><span style="flex:1">${h(c.addr)}</span><span id="dist" class="dist"></span><button class="ed" id="bEd" style="padding:4px 10px">✎</button></div>
+    ${rt.map((r) => recHTML(r, wd)).join("")}
+    ${ro.length ? `<div class="other">今天不送：${ro.map((r) => `${h(r.name)}（${h(r.paper)}，${dayTxt(r)}）`).join("；")}</div>` : ""}
+    <div class="slide" id="slide"><span>向右滑 → 已送达</span><div class="th">➜</div></div>
+    <div class="row3"><button id="bPrev" ${ci === 0 ? "disabled" : ""}>◀ 上一站</button><button id="bSkip">跳过 ▶</button><button id="bNav">导航</button></div>`;
+  updDist();
+  $("#bEd").onclick = () => openEdit(c.id);
+  $("#bPrev").onclick = () => { const p = todays[ci - 1]; pr.done = pr.done.filter((x) => x !== p.id); pr.cur = p.id; setProg(cur, pr); follow = true; renderRoute(true); };
+  $("#bSkip").onclick = () => { const n = todays.slice(ci + 1).find((s) => !pr.done.includes(s.id)); if (n) { pr.cur = n.id; setProg(cur, pr); follow = true; renderRoute(true); } else toast("后面没有了；没送的站在列表里还看得到"); };
+  $("#bNav").onclick = () => nav(c.ll);
+  slider($("#slide"), () => deliver(c.id));
+}
+function deliver(id) {
+  const pr = prog(cur); if (!pr.done.includes(id)) pr.done.push(id);
+  const now = Date.now(); pr.t0 = pr.t0 || now;
+  const { todays } = state(), i = todays.findIndex((s) => s.id === id);
+  const n = todays.slice(i + 1).find((s) => !pr.done.includes(s.id)) || todays.find((s) => !pr.done.includes(s.id));
+  pr.cur = n ? n.id : null; if (!n) pr.t1 = now;
+  setProg(cur, pr); if (navigator.vibrate) navigator.vibrate(40); follow = true; renderRoute(true);
+}
+function undoLast() { const pr = prog(cur); const id = pr.done.pop(); pr.cur = id || null; pr.t1 = null; setProg(cur, pr); renderRoute(true); }
+function nav(ll) { location.href = `https://www.google.com/maps/dir/?api=1&destination=${ll[0]},${ll[1]}&travelmode=bicycling`; }
+function slider(el, done) {
+  const th = el.querySelector(".th"); let x0 = null, w = 0;
+  th.onpointerdown = (e) => { x0 = e.clientX; w = el.clientWidth - th.clientWidth - 8; th.setPointerCapture(e.pointerId); th.style.transition = "none"; };
+  th.onpointermove = (e) => { if (x0 == null) return; th.style.transform = `translateX(${Math.max(0, Math.min(w, e.clientX - x0))}px)`; };
+  th.onpointerup = th.onpointercancel = (e) => {
+    if (x0 == null) return; const dx = e.clientX - x0; x0 = null; th.style.transition = "transform .2s";
+    if (dx > w * 0.75) { th.style.transform = `translateX(${w}px)`; setTimeout(done, 120); } else th.style.transform = "";
+  };
+}
+
+// ---------- 列表 ----------
+function renderList(d, wd, pr, todays, c) {
+  $("#lHide").textContent = hideDone ? "显示已送" : "隐藏已送";
+  $("#lAll").textContent = showAll || sorting ? "只看今天送的" : "显示今天不送的";
+  $("#lSort").textContent = sorting ? "排好了" : "调整顺序";
+  const items = (showAll || sorting ? d.stops : todays).filter((s) => sorting || !hideDone || !pr.done.includes(s.id));
+  $("#list").innerHTML = items.map((s) => {
+    const k = todays.indexOf(s), on = k >= 0, done = pr.done.includes(s.id);
+    const rs = s.r.filter((r) => (on ? recToday(r, wd) : true));
+    return `<div class="li ${done ? "isdone" : ""} ${s === c ? "iscur" : ""} ${on ? "" : "nottoday"}" data-id="${h(s.id)}"><div class="bg">${done ? "↩ 撤销" : "✓ 送达"}</div>
+      <div class="in"><span class="k">${on ? k + 1 : "–"}</span><div class="body"><div class="a">${h(s.addr)}</div>
+      ${rs.map((r) => `<div class="muted"><span class="pp ${PAPERS.includes(r.paper) ? h(r.paper) : "X"}" style="font-size:11px;min-width:30px">${h(r.paper)}</span>${r.n > 1 ? ` <span class="cnt">×${r.n}</span>` : ""} ${h(r.name)}${on ? "" : ` · ${dayTxt(r)}`}${r.note ? ` <span style="color:var(--warn)">${h(r.note)}</span>` : ""}</div>`).join("")}</div>
+      ${sorting ? `<div class="mv"><button data-up>↑</button><button data-down>↓</button></div>` : `<button class="ed" data-ed>✎</button>`}</div></div>`;
+  }).join("") || `<p class="muted" style="text-align:center">没有要显示的站</p>`;
+  $("#list").querySelectorAll(".li").forEach((li) => {
+    const id = li.dataset.id;
+    li.querySelector("[data-ed]")?.addEventListener("click", (e) => { e.stopPropagation(); openEdit(id); });
+    li.querySelector("[data-up]")?.addEventListener("click", (e) => { e.stopPropagation(); move(id, -1); });
+    li.querySelector("[data-down]")?.addEventListener("click", (e) => { e.stopPropagation(); move(id, 1); });
+    if (!sorting && todays.some((s) => s.id === id)) swipeRow(li, id);
+  });
+}
+function swipeRow(li, id) {
+  const inn = li.querySelector(".in"); let x0 = null, y0 = 0, dx = 0, on = false;
+  inn.addEventListener("pointerdown", (e) => { if (e.target.closest("button")) return; x0 = e.clientX; y0 = e.clientY; dx = 0; on = false; });
+  inn.addEventListener("pointermove", (e) => {
+    if (x0 == null) return; dx = e.clientX - x0;
+    if (!on && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(e.clientY - y0)) { on = true; inn.setPointerCapture(e.pointerId); inn.style.transition = "none"; }
+    if (on) inn.style.transform = `translateX(${Math.max(0, dx)}px)`;
+  });
+  const end = () => {
+    if (x0 == null) return; x0 = null; inn.style.transition = "";
+    if (on && dx > 90) { const pr = prog(cur); if (pr.done.includes(id)) { pr.done = pr.done.filter((x) => x !== id); pr.t1 = null; } else { pr.done.push(id); pr.t0 = pr.t0 || Date.now(); } setProg(cur, pr); if (navigator.vibrate) navigator.vibrate(30); renderRoute(); return; }
+    inn.style.transform = "";
+    if (!on) { const pr = prog(cur); pr.cur = id; setProg(cur, pr); follow = true; setView("map"); }
+  };
+  inn.addEventListener("pointerup", end); inn.addEventListener("pointercancel", () => { x0 = null; inn.style.transform = ""; });
+}
+$("#lHide").onclick = () => { hideDone = !hideDone; LS.set("hideDone", hideDone); renderRoute(); };
+$("#lAll").onclick = () => { if (sorting) sorting = false; else showAll = !showAll; renderRoute(); };
+$("#lSort").onclick = () => { sorting = !sorting; renderRoute(); };
+$("#lAdd").onclick = () => addStop();
+function move(id, dir) {
+  const d = district(cur), ids = d.stops.map((s) => s.id), i = ids.indexOf(id), j = i + dir;
+  if (j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]]; P(cur).order = ids; savePatch(); renderRoute();
+}
+
+// ---------- 编辑 ----------
+let editing = null;
+function openEdit(id, isNew) {
+  const d = district(cur), s = isNew || d.stops.find((x) => x.id === id);
+  editing = JSON.parse(JSON.stringify(s)); editing._new = !!isNew;
+  $("#eTitle").textContent = isNew ? "加一站" : "编辑 " + s.addr;
+  $("#eDel").classList.toggle("hide", !!isNew);
+  drawEdit(); $("#dEdit").showModal();
+}
+function drawEdit() {
+  const s = editing;
+  $("#eBody").innerHTML = `<label>地址</label><input id="eAddr" value="${h(s.addr)}">
+    ${s._new ? `<div class="row3" style="margin-top:6px"><button id="eGeo">按地址找位置</button><button id="eGps">用我现在的位置</button></div><p id="eLoc" class="muted">${s.ll ? "位置：" + s.ll.map((x) => x.toFixed(5)).join(", ") : "还没有位置"}</p>` : ""}
+    ${s.r.map((r, i) => `<div class="rbox" data-i="${i}"><div class="grid2"><div><label>名字</label><input data-k="name" value="${h(r.name)}"></div>
+      <div><label>报纸</label><select data-k="paper">${[...new Set(PAPERS.concat([r.paper]))].map((p) => `<option ${p === r.paper ? "selected" : ""}>${h(p)}</option>`).join("")}</select></div>
+      <div><label>份数</label><input data-k="n" type="number" min="1" value="${r.n}"></div></div>
+      <label>哪几天送</label><div class="days">${[1, 2, 3, 4, 5, 6].map((x) => `<label>${WD[x]}<input type="checkbox" data-day="${x}" ${r.days.includes(x) ? "checked" : ""}></label>`).join("")}
+      <label>停送<input type="checkbox" data-k="paused" ${r.paused ? "checked" : ""}></label></div>
+      <label>备注（红字）</label><input data-k="note" value="${h(r.note)}"><button data-rm style="margin-top:8px;color:var(--warn)">删除这个人</button></div>`).join("")}
+    <button id="eAddR" style="width:100%">＋ 加一个收件人</button>`;
+  const read = () => {
+    s.addr = $("#eAddr").value.trim();
+    $("#eBody").querySelectorAll(".rbox").forEach((b) => {
+      const r = s.r[+b.dataset.i];
+      r.name = b.querySelector('[data-k=name]').value.trim(); r.paper = b.querySelector('[data-k=paper]').value;
+      r.n = Math.max(1, +b.querySelector('[data-k=n]').value || 1); r.note = b.querySelector('[data-k=note]').value.trim();
+      r.paused = b.querySelector('[data-k=paused]').checked; r.days = [...b.querySelectorAll("[data-day]")].filter((c) => c.checked).map((c) => +c.dataset.day);
+    });
+  };
+  drawEdit.read = read;
+  $("#eAddR").onclick = () => { read(); s.r.push({ id: "new" + Date.now(), name: "", paper: "K", n: 1, days: [1, 2, 3, 4, 5, 6], note: "", tag: "", paused: false }); drawEdit(); };
+  $("#eBody").querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { read(); s.r.splice(+b.closest(".rbox").dataset.i, 1); drawEdit(); }));
+  if (s._new) {
+    $("#eGps").onclick = () => { if (!gps) return toast("还没有定位"); read(); s.ll = [gps.lat, gps.lon]; drawEdit(); };
+    $("#eGeo").onclick = async () => {
+      read(); try {
+        const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(s.addr + ", Konstanz")).then((x) => x.json());
+        if (!r.length) return toast("找不到这个地址"); s.ll = [+r[0].lat, +r[0].lon]; drawEdit();
+      } catch (e) { toast("没网，查不了地址"); }
+    };
+  }
+}
+$("#eSave").onclick = () => {
+  drawEdit.read(); const s = editing, p = P(cur);
+  if (!s.addr) return toast("地址不能空");
+  if (s._new) { if (!s.ll) return toast("先定一个位置"); delete s._new; p.add[s.id] = { stop: s, after: s._after || null }; delete s._after; }
+  else { delete s._new; if (p.add[s.id]) p.add[s.id].stop = s; else p.stops[s.id] = s; }
+  savePatch(); $("#dEdit").close(); renderRoute(); toast("已保存（只在这台手机上）");
+};
+$("#eDel").onclick = () => {
+  if (!confirm("删除这一站？")) return; const p = P(cur), id = editing.id;
+  if (p.add[id]) delete p.add[id]; else p.del[id] = true;
+  savePatch(); $("#dEdit").close(); renderRoute();
+};
+function addStop() {
+  const { c } = state();
+  openEdit(null, { id: "new:" + Date.now(), addr: "", ll: gps ? [gps.lat, gps.lon] : null, _after: c ? c.id : null,
+    r: [{ id: "n1", name: "", paper: "K", n: 1, days: [1, 2, 3, 4, 5, 6], note: "", tag: "", paused: false }] });
+}
+document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => b.closest("dialog").close()));
+
+// ---------- 设置 ----------
+$("#btnSet").onclick = () => {
+  const n = Object.values(patch).reduce((a, p) => a + Object.keys(p.stops || {}).length + Object.keys(p.add || {}).length + Object.keys(p.del || {}).length + (p.order ? 1 : 0), 0);
+  $("#sBody").innerHTML = `<p>数据版本：<b>${h(base.v)}</b></p><button id="sUpd" style="width:100%">检查更新</button>
+    <p>本机修改：<b>${n}</b> 处<br><span class="muted">调顺序、改份数这些只存在这台手机上。发给 Claude 后它会并进正式数据，下次更新就都有了。</span></p>
+    <button id="sExp" class="pri" style="width:100%">导出本机修改（复制 / 分享）</button>
+    <button id="sReset" style="width:100%;margin-top:8px">清除本机修改</button>
+    <button id="sProg" style="width:100%;margin-top:8px">清空${iso(date).slice(5)}的送达记录</button>
+    <button id="sLock" style="width:100%;margin-top:8px;color:var(--warn)">忘记密码（重新解锁）</button>`;
+  $("#sUpd").onclick = () => checkUpdate(true);
+  $("#sExp").onclick = async () => {
+    const t = JSON.stringify({ app: "送报路线", v: base.v, patch }, null, 1);
+    try { if (navigator.share) await navigator.share({ title: "送报路线修改", text: t }); else { await navigator.clipboard.writeText(t); toast("已复制，粘贴给 Claude"); } }
+    catch (e) { try { await navigator.clipboard.writeText(t); toast("已复制，粘贴给 Claude"); } catch (e2) { prompt("复制下面的内容", t); } }
+  };
+  $("#sReset").onclick = () => { if (confirm("清除这台手机上的所有修改？")) { patch = {}; savePatch(); renderHome(); $("#dSet").close(); } };
+  $("#sProg").onclick = () => { if (confirm("清空这一天的送达记录？")) { base.districts.forEach((d) => LS.del(progKey(d.id))); renderHome(); $("#dSet").close(); } };
+  $("#sLock").onclick = () => { if (confirm("忘记密码？下次打开要重新输入。")) { LS.del("pw"); location.reload(); } };
+  $("#dSet").showModal();
+};
+
+// ---------- 定位 + 屏幕常亮 ----------
+let gps = null, watch = null;
+function startGPS() {
+  if (watch != null || !navigator.geolocation) return;
+  watch = navigator.geolocation.watchPosition((p) => {
+    gps = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy };
+    const ll = [gps.lat, gps.lon];
+    if (!me) me = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="me"></div>', iconSize: [0, 0] }), zIndexOffset: 2000, interactive: false });
+    me.setLatLng(ll); if (map && !layers.pins.hasLayer(me)) me.addTo(layers.pins);
+    updDist(); if (follow && view === "map" && !startGPS.fitted) { startGPS.fitted = true; fitCur(); }
+  }, () => toast("没有定位权限：地图上不显示你的位置"), { enableHighAccuracy: true, maximumAge: 3000 });
+}
+function dist(a, b) { const R = 6371000, r = Math.PI / 180, x = (b[1] - a[1]) * r * Math.cos(((a[0] + b[0]) / 2) * r), y = (b[0] - a[0]) * r; return Math.hypot(x, y) * R; }
+function updDist() {
+  const e = $("#dist"); if (!e || !gps || !cur) return; const { c } = state(); if (!c) return;
+  const m = dist([gps.lat, gps.lon], c.ll); e.textContent = m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+  e.classList.toggle("near", m < 25);
+}
+let wake = null;
+async function requestWake() { try { wake = await navigator.wakeLock?.request("screen"); } catch (e) {} }
+function releaseWake() { try { wake?.release(); } catch (e) {} wake = null; }
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { if (cur) requestWake(); checkUpdate(); } });
+
+// ---------- 启动 ----------
+function render() { if (cur) renderRoute(); else renderHome(); }
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+(async () => {
+  if (base) goHome();
+  await checkUpdate();
+  if (!base && !$("#unlock").classList.contains("hide")) return;
+  if (!base) { $("#unlock").classList.remove("hide"); $("#pwerr").textContent = "第一次使用要联网下载数据"; }
+})();
+</script>
+</body>
+</html>
