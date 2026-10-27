@@ -60,17 +60,17 @@ header button{padding:6px 10px}
 .cnt{font-weight:800;color:var(--warn)}
 .tag{font-size:12px;border:1px solid var(--mute);color:var(--mute);border-radius:4px;padding:0 4px}
 .other{color:var(--mute);font-size:13px;margin-top:6px}
-.slide{position:relative;height:56px;border-radius:28px;background:var(--ok);margin:12px 0 8px;user-select:none;touch-action:none;overflow:hidden}
-.slide span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;letter-spacing:1px}
-.slide .th{position:absolute;left:4px;top:4px;width:48px;height:48px;border-radius:24px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--ok);box-shadow:0 1px 4px #0004}
+.done-btn{display:block;width:100%;height:56px;border-radius:28px;background:var(--ok);border-color:var(--ok);color:#fff;font-size:18px;font-weight:700;letter-spacing:1px;margin:12px 0 8px;touch-action:manipulation}
+.done-btn:active{filter:brightness(.85)}
 .row3{display:flex;gap:8px}.row3 button{flex:1;padding:10px 6px}
 /* 列表 */
 #list{flex:1;overflow:auto;padding:8px 10px 80px}
 .li{position:relative;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:6px;touch-action:pan-y;overflow:hidden}
 .li .in{display:flex;gap:10px;align-items:flex-start;padding:10px;background:var(--card);position:relative;transition:transform .15s}
-.li .bg{position:absolute;inset:0;background:var(--ok);color:#fff;display:flex;align-items:center;padding-left:16px;font-weight:700}
 .li .k{font-weight:800;min-width:28px;color:var(--mute)}
-.li.isdone .in{opacity:.45}
+.li.isdone .k,.li.isdone .body{opacity:.45}
+.li .ck{padding:4px 12px;font-weight:700;background:var(--ok);border-color:var(--ok);color:#fff}
+.li .ck.on{background:var(--card);color:var(--mute);border-color:var(--line)}
 .li.isdone .a{text-decoration:line-through}
 .li.iscur{border-color:var(--cur);box-shadow:0 0 0 2px var(--cur)}
 .li.nottoday .in{opacity:.4}
@@ -303,7 +303,7 @@ function renderMap(d, wd, pr, todays, c, ci, fit) {
   const pin = (ll, txt, cls, z) => L.marker(ll, { icon: L.divIcon({ className: "", html: `<div class="pin ${cls}">${txt}</div>`, iconSize: [0, 0] }), zIndexOffset: z || 0, keyboard: false });
   pin(d.pickup.ll, "取", "pick").addTo(layers.pins);
   pin(d.end.ll, "终", "end").addTo(layers.pins);
-  todays.forEach((s, i) => { const m = pin(s.ll, i + 1, s === c ? "cur" : pr.done.includes(s.id) ? "done" : "", s === c ? 1000 : 0).addTo(layers.pins); m.on("click", () => { pr.cur = s.id; setProg(cur, pr); renderRoute(true); }); });
+  todays.forEach((s, i) => { const m = pin(s.ll, i + 1, s === c ? "cur" : pr.done.includes(s.id) ? "done" : "", s === c ? 1000 : 0).addTo(layers.pins); m.on("click", () => { pr.cur = s.id; setProg(cur, pr); renderRoute(); }); });
   // 当前这一段
   const prev = ci > 0 ? todays[ci - 1].id : "@pick", target = c ? c.id : "@end";
   const p = pathBetween(d, prev, target), tll = c ? c.ll : d.end.ll;
@@ -312,7 +312,13 @@ function renderMap(d, wd, pr, todays, c, ci, fit) {
   else L.polyline([from, tll], { color: "#2563eb", weight: 5, dashArray: "8 8" }).addTo(layers.leg);
   if (me) me.addTo(layers.pins);
   renderSheet(d, wd, pr, todays, c, ci);
-  if (fit || follow) fitCur();
+  if (fit) fitCur(); else if (follow) keepView();
+}
+// 送达 / 跳过之后不改缩放：下一站还在屏幕里就不动，跑出去了才平移过去
+function keepView() {
+  if (!cur || view !== "map") return;
+  const { d, c } = state(), ll = c ? c.ll : d.end.ll;
+  if (!map.getBounds().pad(-0.15).contains(ll)) map.panTo(ll);
 }
 function fitCur() {
   if (!cur || view !== "map") return;
@@ -344,14 +350,14 @@ function renderSheet(d, wd, pr, todays, c, ci) {
   el.innerHTML = `${start}<div class="addr"><span class="n">${ci + 1}</span><span style="flex:1">${h(c.addr)}</span><span id="dist" class="dist"></span><button class="ed" id="bEd" style="padding:4px 10px">✎</button></div>
     ${rt.map((r) => recHTML(r, wd)).join("")}
     ${ro.length ? `<div class="other">今天不送：${ro.map((r) => `${h(r.name)}（${h(r.paper)}，${dayTxt(r)}）`).join("；")}</div>` : ""}
-    <div class="slide" id="slide"><span>向右滑 → 已送达</span><div class="th">➜</div></div>
+    <button class="done-btn" id="bDone">✓ 已送达</button>
     <div class="row3"><button id="bPrev" ${ci === 0 ? "disabled" : ""}>◀ 上一站</button><button id="bSkip">跳过 ▶</button><button id="bNav">导航</button></div>`;
   updDist();
   $("#bEd").onclick = () => openEdit(c.id);
-  $("#bPrev").onclick = () => { const p = todays[ci - 1]; pr.done = pr.done.filter((x) => x !== p.id); pr.cur = p.id; setProg(cur, pr); follow = true; renderRoute(true); };
-  $("#bSkip").onclick = () => { const n = todays.slice(ci + 1).find((s) => !pr.done.includes(s.id)); if (n) { pr.cur = n.id; setProg(cur, pr); follow = true; renderRoute(true); } else toast("后面没有了；没送的站在列表里还看得到"); };
+  $("#bPrev").onclick = () => { const p = todays[ci - 1]; pr.done = pr.done.filter((x) => x !== p.id); pr.cur = p.id; setProg(cur, pr); follow = true; renderRoute(); };
+  $("#bSkip").onclick = () => { const n = todays.slice(ci + 1).find((s) => !pr.done.includes(s.id)); if (n) { pr.cur = n.id; setProg(cur, pr); follow = true; renderRoute(); } else toast("后面没有了；没送的站在列表里还看得到"); };
   $("#bNav").onclick = () => nav(c.ll);
-  slider($("#slide"), () => deliver(c.id));
+  $("#bDone").onclick = () => { if (Date.now() - deliver.at < 700) return; deliver.at = Date.now(); deliver(c.id); };  // 防连点：按一下只算一站
 }
 function deliver(id) {
   const pr = prog(cur); if (!pr.done.includes(id)) pr.done.push(id);
@@ -359,19 +365,11 @@ function deliver(id) {
   const { todays } = state(), i = todays.findIndex((s) => s.id === id);
   const n = todays.slice(i + 1).find((s) => !pr.done.includes(s.id)) || todays.find((s) => !pr.done.includes(s.id));
   pr.cur = n ? n.id : null; if (!n) pr.t1 = now;
-  setProg(cur, pr); if (navigator.vibrate) navigator.vibrate(40); follow = true; renderRoute(true);
+  setProg(cur, pr); if (navigator.vibrate) navigator.vibrate(40); follow = true; renderRoute();
 }
-function undoLast() { const pr = prog(cur); const id = pr.done.pop(); pr.cur = id || null; pr.t1 = null; setProg(cur, pr); renderRoute(true); }
+function undoLast() { const pr = prog(cur); const id = pr.done.pop(); pr.cur = id || null; pr.t1 = null; setProg(cur, pr); follow = true; renderRoute(); }
 function nav(ll) { location.href = `https://www.google.com/maps/dir/?api=1&destination=${ll[0]},${ll[1]}&travelmode=bicycling`; }
-function slider(el, done) {
-  const th = el.querySelector(".th"); let x0 = null, w = 0;
-  th.onpointerdown = (e) => { x0 = e.clientX; w = el.clientWidth - th.clientWidth - 8; th.setPointerCapture(e.pointerId); th.style.transition = "none"; };
-  th.onpointermove = (e) => { if (x0 == null) return; th.style.transform = `translateX(${Math.max(0, Math.min(w, e.clientX - x0))}px)`; };
-  th.onpointerup = th.onpointercancel = (e) => {
-    if (x0 == null) return; const dx = e.clientX - x0; x0 = null; th.style.transition = "transform .2s";
-    if (dx > w * 0.75) { th.style.transform = `translateX(${w}px)`; setTimeout(done, 120); } else th.style.transform = "";
-  };
-}
+deliver.at = 0;
 
 // ---------- 列表 ----------
 function renderList(d, wd, pr, todays, c) {
@@ -382,34 +380,23 @@ function renderList(d, wd, pr, todays, c) {
   $("#list").innerHTML = items.map((s) => {
     const k = todays.indexOf(s), on = k >= 0, done = pr.done.includes(s.id);
     const rs = s.r.filter((r) => (on ? recToday(r, wd) : true));
-    return `<div class="li ${done ? "isdone" : ""} ${s === c ? "iscur" : ""} ${on ? "" : "nottoday"}" data-id="${h(s.id)}"><div class="bg">${done ? "↩ 撤销" : "✓ 送达"}</div>
+    return `<div class="li ${done ? "isdone" : ""} ${s === c ? "iscur" : ""} ${on ? "" : "nottoday"}" data-id="${h(s.id)}">
       <div class="in"><span class="k">${on ? k + 1 : "–"}</span><div class="body"><div class="a">${h(s.addr)}</div>
       ${rs.map((r) => `<div class="muted"><span class="pp ${PAPERS.includes(r.paper) ? h(r.paper) : "X"}" style="font-size:11px;min-width:30px">${h(r.paper)}</span>${r.n > 1 ? ` <span class="cnt">×${r.n}</span>` : ""} ${h(r.name)}${on ? "" : ` · ${dayTxt(r)}`}${r.note ? ` <span style="color:var(--warn)">${h(r.note)}</span>` : ""}</div>`).join("")}</div>
-      ${sorting ? `<div class="mv"><button data-up>↑</button><button data-down>↓</button></div>` : `<button class="ed" data-ed>✎</button>`}</div></div>`;
+      ${sorting ? `<div class="mv"><button data-up>↑</button><button data-down>↓</button></div>` : `${on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : ""}<button class="ed" data-ed>✎</button>`}</div></div>`;
   }).join("") || `<p class="muted" style="text-align:center">没有要显示的站</p>`;
   $("#list").querySelectorAll(".li").forEach((li) => {
     const id = li.dataset.id;
     li.querySelector("[data-ed]")?.addEventListener("click", (e) => { e.stopPropagation(); openEdit(id); });
     li.querySelector("[data-up]")?.addEventListener("click", (e) => { e.stopPropagation(); move(id, -1); });
     li.querySelector("[data-down]")?.addEventListener("click", (e) => { e.stopPropagation(); move(id, 1); });
-    if (!sorting && todays.some((s) => s.id === id)) swipeRow(li, id);
+    li.querySelector("[data-ck]")?.addEventListener("click", (e) => {
+      e.stopPropagation(); const pr = prog(cur);
+      if (pr.done.includes(id)) { pr.done = pr.done.filter((x) => x !== id); pr.t1 = null; } else { pr.done.push(id); pr.t0 = pr.t0 || Date.now(); }
+      setProg(cur, pr); if (navigator.vibrate) navigator.vibrate(30); renderRoute();
+    });
+    if (!sorting && todays.some((s) => s.id === id)) li.querySelector(".in").addEventListener("click", () => { const pr = prog(cur); pr.cur = id; setProg(cur, pr); follow = true; setView("map"); });
   });
-}
-function swipeRow(li, id) {
-  const inn = li.querySelector(".in"); let x0 = null, y0 = 0, dx = 0, on = false;
-  inn.addEventListener("pointerdown", (e) => { if (e.target.closest("button")) return; x0 = e.clientX; y0 = e.clientY; dx = 0; on = false; });
-  inn.addEventListener("pointermove", (e) => {
-    if (x0 == null) return; dx = e.clientX - x0;
-    if (!on && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(e.clientY - y0)) { on = true; inn.setPointerCapture(e.pointerId); inn.style.transition = "none"; }
-    if (on) inn.style.transform = `translateX(${Math.max(0, dx)}px)`;
-  });
-  const end = () => {
-    if (x0 == null) return; x0 = null; inn.style.transition = "";
-    if (on && dx > 90) { const pr = prog(cur); if (pr.done.includes(id)) { pr.done = pr.done.filter((x) => x !== id); pr.t1 = null; } else { pr.done.push(id); pr.t0 = pr.t0 || Date.now(); } setProg(cur, pr); if (navigator.vibrate) navigator.vibrate(30); renderRoute(); return; }
-    inn.style.transform = "";
-    if (!on) { const pr = prog(cur); pr.cur = id; setProg(cur, pr); follow = true; setView("map"); }
-  };
-  inn.addEventListener("pointerup", end); inn.addEventListener("pointercancel", () => { x0 = null; inn.style.transform = ""; });
 }
 $("#lHide").onclick = () => { hideDone = !hideDone; LS.set("hideDone", hideDone); renderRoute(); };
 $("#lAll").onclick = () => { if (sorting) sorting = false; else showAll = !showAll; renderRoute(); };

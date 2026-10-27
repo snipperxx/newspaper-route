@@ -1,5 +1,5 @@
 // 离线缓存：App 本身先用缓存；路线数据先联网（拿最新），没网用缓存；地图瓦片看过的存下来
-const V = "songbao2-v1";
+const V = "songbao2-v2";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"];
@@ -12,14 +12,14 @@ self.addEventListener("fetch", (e) => {
   const u = new URL(e.request.url);
   if (e.request.method !== "GET" || u.hostname === "nominatim.openstreetmap.org") return;
   if (u.pathname.endsWith("data.enc.json")) {
-    e.respondWith(fetch(e.request).then((r) => { const c = r.clone(); caches.open(V).then((x) => x.put("data.enc.json", c)); return r; })
+    e.respondWith(fetch(e.request, { cache: "no-cache" }).then((r) => { const c = r.clone(); caches.open(V).then((x) => x.put("data.enc.json", c)); return r; })
       .catch(() => caches.match("data.enc.json")));
   } else if (u.hostname === "tile.openstreetmap.org") {
     e.respondWith(caches.open("tiles").then((c) => c.match(e.request).then((hit) => hit ||
       fetch(e.request).then((r) => { if (r.ok) c.put(e.request, r.clone()); return r; }))));
   } else if (u.pathname.endsWith("/") || u.pathname.endsWith("index.html")) {
     // 页面本身：先联网拿新版本，没网用缓存
-    e.respondWith(fetch(e.request).then((r) => { const c = r.clone(); caches.open(V).then((x) => x.put(e.request, c)); return r; })
+    e.respondWith(fetch(e.request, { cache: "no-cache" }).then((r) => { const c = r.clone(); caches.open(V).then((x) => x.put(e.request, c)); return r; })
       .catch(() => caches.match(e.request).then((r) => r || caches.match("index.html"))));
   } else {
     e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request)));
