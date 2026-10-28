@@ -97,6 +97,14 @@ input,select,textarea{font:inherit;width:100%;padding:8px 10px;border:1px solid 
 #toast.on{opacity:1}
 .done-box{text-align:center;padding:10px 0}
 .done-box b{font-size:22px;color:var(--ok)}
+/* 报告 */
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.chips button{padding:8px 10px;font-size:14px;border-radius:18px}
+.chips button.on{background:var(--warn);border-color:var(--warn);color:#fff}
+.ck2{display:flex;align-items:center;gap:8px;color:var(--fg);font-size:14px;margin:8px 0}.ck2 input{width:auto}
+#bRep{color:var(--warn)}
+.repcard{border-color:var(--warn)}
+.rep{border-bottom:1px dashed var(--line);padding:6px 0;font-size:14px}.rep:last-child{border-bottom:0}
 </style>
 </head>
 <body>
@@ -138,6 +146,9 @@ input,select,textarea{font:inherit;width:100%;padding:8px 10px;border:1px solid 
 <!-- 编辑 -->
 <dialog id="dEdit"><div class="dh"><span id="eTitle">编辑</span><button data-close>✕</button></div><div class="db" id="eBody"></div>
   <div class="df"><button id="eDel" style="margin-right:auto;color:var(--warn)">删除这一站</button><button data-close>取消</button><button class="pri" id="eSave">保存</button></div></dialog>
+<!-- 报告问题 -->
+<dialog id="dRep"><div class="dh"><span id="rpTitle">报告问题</span><button data-close>✕</button></div><div class="db" id="rpBody"></div>
+  <div class="df"><button data-close>取消</button><button class="pri" id="rpSave">记下来</button></div></dialog>
 <!-- 设置 -->
 <dialog id="dSet"><div class="dh"><span>设置</span><button data-close>✕</button></div><div class="db" id="sBody"></div>
   <div class="df"><button data-close>关闭</button></div></dialog>
@@ -251,6 +262,13 @@ function renderHome() {
         <small>${k}/${n} 已送${mins != null ? ` · 用时 ${mins} 分钟` : ""}${Object.keys(patch[d.id]?.stops || {}).length + Object.keys(patch[d.id]?.add || {}).length + Object.keys(patch[d.id]?.del || {}).length || patch[d.id]?.order ? " · 有本机修改" : ""}</small></div>
         <button class="pri">${k === 0 ? "开始" : k < n ? "继续" : "查看"}</button></div>`;
     }).join("");
+  if (reports.length) {
+    $("#dlist").insertAdjacentHTML("beforeend", `<div class="card repcard"><b>⚠ ${reports.length} 条问题报告还没发</b>
+      ${reports.slice(-3).map((r) => `<div class="rep"><b>${h(r.d)} ${h(r.addr)}</b>：${h(r.cats.join("、"))}${r.text ? " —— " + h(r.text) : ""}</div>`).join("")}
+      <div class="row3" style="margin-top:8px"><button class="pri" id="hRepSend">发给 Claude</button><button id="hRepClr">发完了，清掉</button></div></div>`);
+    $("#hRepSend").onclick = () => shareText("送报 App 报告", reportText());
+    $("#hRepClr").onclick = () => { if (confirm("清掉这 " + reports.length + " 条报告？（先确认已经发给 Claude 了）")) { reports = []; LS.set("reports", reports); renderHome(); } };
+  }
   $("#dlist").querySelectorAll("[data-open]").forEach((e) => (e.onclick = () => openDistrict(e.dataset.open)));
   $("#verLbl").textContent = "数据版本 " + base.v;
 }
@@ -274,8 +292,9 @@ function setView(v) {
   renderRoute();
 }
 function initMap() {
-  map = L.map("map", { zoomControl: false, attributionControl: true, rotate: true, touchRotate: true, rotateControl: false, bearing: LS.get("bearing", 0) }).setView([47.677, 9.188], 16);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+  // 手机上 Leaflet 默认手指松开才加载新瓦片，拖的时候路线下面是空白，看着像飘着的一层 → 拖动中也加载，周围多留几圈瓦片；路线多画出屏幕一截
+  map = L.map("map", { zoomControl: false, attributionControl: true, rotate: true, touchRotate: true, rotateControl: false, bearing: LS.get("bearing", 0), renderer: L.svg({ padding: 0.6 }) }).setView([47.677, 9.188], 16);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap", updateWhenIdle: false, updateInterval: 100, keepBuffer: 6 }).addTo(map);
   layers.all = L.layerGroup().addTo(map); layers.leg = L.layerGroup().addTo(map); layers.pins = L.layerGroup().addTo(map);
   map.on("dragstart", () => (follow = false));
   // 两指可以转地图；角度记住，下次打开还是这个方向。红箭头指北，点一下转回正北
@@ -310,15 +329,55 @@ function renderMap(d, wd, pr, todays, c, ci, fit) {
   pin(d.pickup.ll, "取", "pick").addTo(layers.pins);
   pin(d.end.ll, "终", "end").addTo(layers.pins);
   todays.forEach((s, i) => { const m = pin(s.ll, i + 1, s === c ? "cur" : pr.done.includes(s.id) ? "done" : "", s === c ? 1000 : 0).addTo(layers.pins); m.on("click", () => { pr.cur = s.id; setProg(cur, pr); renderRoute(); }); });
-  // 当前这一段
-  const prev = ci > 0 ? todays[ci - 1].id : "@pick", target = c ? c.id : "@end";
-  const p = pathBetween(d, prev, target), tll = c ? c.ll : d.end.ll;
-  const from = prev === "@pick" ? d.pickup.ll : todays[ci - 1].ll;
-  if (p) L.polyline(p.pts, { color: "#2563eb", weight: 7, opacity: .9 }).addTo(layers.leg);
-  else L.polyline([from, tll], { color: "#2563eb", weight: 5, dashArray: "8 8" }).addTo(layers.leg);
   if (me) me.addTo(layers.pins);
   renderSheet(d, wd, pr, todays, c, ci);
+  drawLeg();
   if (fit) fitCur(); else if (follow) keepView();
+}
+// ---------- 当前这一段（蓝线）：有定位就从我现在的位置画到下一站，走着走着跟着缩短 ----------
+// 先在排好的路线上找我；离开路线 35 m 以上就向路网要一条新的（最多 8 秒一次），拿到之前画虚线
+let live = { key: null, from: null, pts: null, at: 0, busy: false }, legM = null;
+function nearestOn(pts, p) {
+  let best = { d: Infinity, i: 0, q: pts[0] };
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1], kx = Math.cos((p[0] * Math.PI) / 180);
+    const ax = (a[1] - p[1]) * kx, ay = a[0] - p[0], dx = (b[1] - a[1]) * kx, dy = b[0] - a[0], L2 = dx * dx + dy * dy;
+    const t = L2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L2)) : 0, q = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+    const dd = dist(p, q); if (dd < best.d) best = { d: dd, i, q };
+  }
+  return best;
+}
+const pathLen = (pts) => pts.slice(1).reduce((s, x, i) => s + dist(pts[i], x), 0);
+function drawLeg() {
+  if (!cur || view !== "map" || !map) return;
+  const { d, todays, c, ci } = state();
+  layers.leg.clearLayers(); legM = null;
+  if (wday() === 0) return;
+  const prev = ci > 0 ? todays[ci - 1].id : "@pick", key = cur + "|" + (c ? c.id : "@end"), tll = c ? c.ll : d.end.ll;
+  let p = pathBetween(d, prev, c ? c.id : "@end");
+  if (p && dist(p.pts[p.pts.length - 1], tll) > 30) p = null;  // 这一站的位置在手机上改过，旧路线对不上了
+  let pts, dashed = false;
+  if (gps) {
+    const g = [gps.lat, gps.lon];
+    const lv = live.key === key && live.pts, cand = [p && p.pts, lv].filter(Boolean).map((x) => ({ x, n: nearestOn(x, g) })).sort((a, b) => a.n.d - b.n.d)[0];
+    if (dist(g, tll) < 25) pts = [g, tll];
+    else if (cand && cand.n.d < 35) pts = [g, cand.n.q, ...cand.x.slice(cand.n.i + 1)];
+    else if (lv && dist(live.from, g) < 30) pts = [g, ...lv];  // 站在路网外面（院子里、停车场）：刚要来的路线就从这里起算
+    else { pts = [g, tll]; dashed = true; fetchLive(key, g, tll); }
+    legM = dashed ? null : pathLen(pts);
+  } else if (p) pts = p.pts;
+  else { pts = [prev === "@pick" ? d.pickup.ll : todays[ci - 1].ll, tll]; dashed = true; }
+  L.polyline(pts, dashed ? { color: "#2563eb", weight: 5, dashArray: "8 8" } : { color: "#2563eb", weight: 7, opacity: .9 }).addTo(layers.leg);
+  updDist();
+}
+async function fetchLive(key, g, t) {
+  if (live.busy || (live.key === key && Date.now() - live.at < 8000)) return;
+  live.busy = true;
+  try {
+    const r = await fetch(`https://routing.openstreetmap.de/routed-foot/route/v1/driving/${g[1]},${g[0]};${t[1]},${t[0]}?overview=full&geometries=geojson`).then((x) => x.json());
+    live = { key, from: g, pts: r.routes[0].geometry.coordinates.map(([x, y]) => [y, x]).concat([t]), at: Date.now(), busy: false };
+    drawLeg();
+  } catch (e) { live = { ...live, key, at: Date.now(), busy: false }; }
 }
 // 送达 / 跳过之后不改缩放：下一站还在屏幕里就不动，跑出去了才平移过去
 function keepView() {
@@ -357,12 +416,13 @@ function renderSheet(d, wd, pr, todays, c, ci) {
     ${rt.map((r) => recHTML(r, wd)).join("")}
     ${ro.length ? `<div class="other">今天不送：${ro.map((r) => `${h(r.name)}（${h(r.paper)}，${dayTxt(r)}）`).join("；")}</div>` : ""}
     <button class="done-btn" id="bDone">✓ 已送达</button>
-    <div class="row3"><button id="bPrev" ${ci === 0 ? "disabled" : ""}>◀ 上一站</button><button id="bSkip">跳过 ▶</button><button id="bNav">导航</button></div>`;
+    <div class="row3"><button id="bPrev" ${ci === 0 ? "disabled" : ""}>◀ 上一站</button><button id="bSkip">跳过 ▶</button><button id="bNav">导航</button><button id="bRep">⚠ 报告</button></div>`;
   updDist();
   $("#bEd").onclick = () => openEdit(c.id);
+  $("#bRep").onclick = () => openReport(c);
   $("#bPrev").onclick = () => { const p = todays[ci - 1]; pr.done = pr.done.filter((x) => x !== p.id); pr.cur = p.id; setProg(cur, pr); follow = true; renderRoute(); };
   $("#bSkip").onclick = () => { const n = todays.slice(ci + 1).find((s) => !pr.done.includes(s.id)); if (n) { pr.cur = n.id; setProg(cur, pr); follow = true; renderRoute(); } else toast("后面没有了；没送的站在列表里还看得到"); };
-  $("#bNav").onclick = () => nav(c.ll);
+  $("#bNav").onclick = () => nav(c.ll, c.q);
   $("#bDone").onclick = () => { if (Date.now() - deliver.at < 700) return; deliver.at = Date.now(); deliver(c.id); };  // 防连点：按一下只算一站
 }
 function deliver(id) {
@@ -374,7 +434,8 @@ function deliver(id) {
   setProg(cur, pr); if (navigator.vibrate) navigator.vibrate(40); follow = true; renderRoute();
 }
 function undoLast() { const pr = prog(cur); const id = pr.done.pop(); pr.cur = id || null; pr.t1 = null; setProg(cur, pr); follow = true; renderRoute(); }
-function nav(ll) { location.href = `https://www.google.com/maps/dir/?api=1&destination=${ll[0]},${ll[1]}&travelmode=bicycling`; }
+// q = Google 自己认得的地址（导出时核对过，跟地图上的点对得上）；没有 q 或位置在手机上改过就用坐标
+function nav(ll, q) { location.href = `https://www.google.com/maps/dir/?api=1&destination=${q ? encodeURIComponent(q) : `${ll[0]},${ll[1]}`}&travelmode=bicycling`; }
 deliver.at = 0;
 
 // ---------- 列表 ----------
@@ -460,7 +521,7 @@ $("#eSave").onclick = () => {
   drawEdit.read(); const s = editing, p = P(cur);
   if (!s.addr) return toast("地址不能空");
   if (s._new) { if (!s.ll) return toast("先定一个位置"); delete s._new; p.add[s.id] = { stop: s, after: s._after || null }; delete s._after; }
-  else { delete s._new; if (p.add[s.id]) p.add[s.id].stop = s; else p.stops[s.id] = s; }
+  else { delete s._new; if (district(cur).stops.find((x) => x.id === s.id)?.addr !== s.addr) delete s.q; if (p.add[s.id]) p.add[s.id].stop = s; else p.stops[s.id] = s; }
   savePatch(); $("#dEdit").close(); renderRoute(); toast("已保存（只在这台手机上）");
 };
 $("#eDel").onclick = () => {
@@ -475,21 +536,54 @@ function addStop() {
 }
 document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => b.closest("dialog").close()));
 
+// ---------- 报告问题：现场记下来，回家导出发给 Claude 修正式数据 ----------
+const CATS = ["导航位置不对", "找不到信箱", "进不去（门 / 门禁）", "收件人不在了 / 搬走", "份数不对", "报纸种类不对", "报纸不够", "顺序不顺", "其他"];
+let reports = LS.get("reports", []);
+function openReport(s) {
+  const sel = new Set();
+  $("#rpTitle").textContent = "报告：" + s.addr;
+  const draw = () => {
+    const txt = $("#rpText")?.value || "";
+    $("#rpBody").innerHTML = `<label>什么问题（可以多选）</label><div class="chips">${CATS.map((x) => `<button data-c="${h(x)}" class="${sel.has(x) ? "on" : ""}">${h(x)}</button>`).join("")}</div>
+      <label>说明（写清楚现场的情况，例如“172 号信箱在后院，从 174a 旁边的车道进去”）</label><textarea id="rpText" rows="4">${h(txt)}</textarea>
+      ${gps ? `<label class="ck2"><input type="checkbox" id="rpGps" checked>附上我现在的位置（误差约 ${Math.round(gps.acc)} m）</label>` : `<p class="muted">没有定位，报告里不带位置</p>`}
+      ${gps && sel.has("导航位置不对") ? `<label class="ck2"><input type="checkbox" id="rpFix" checked>我现在就站在这一站门口 → 在这台手机上马上把这一站挪到这里</label>` : ""}`;
+    $("#rpBody").querySelectorAll("[data-c]").forEach((b) => (b.onclick = () => { const k = b.dataset.c; sel.has(k) ? sel.delete(k) : sel.add(k); draw(); }));
+  };
+  $("#rpBody").innerHTML = ""; draw();  // 清空上一次的说明
+  $("#rpSave").onclick = () => {
+    const text = $("#rpText").value.trim();
+    if (!sel.size && !text) return toast("选一个问题或写几句说明");
+    const withGps = gps && $("#rpGps")?.checked, fix = withGps && $("#rpFix")?.checked;
+    reports.push({ t: new Date().toISOString(), date: iso(date), d: cur, stop: s.id, addr: s.addr, cats: [...sel], text,
+      gps: withGps ? [+gps.lat.toFixed(6), +gps.lon.toFixed(6)] : null, acc: withGps ? Math.round(gps.acc) : null, fixed: !!fix, v: base.v });
+    LS.set("reports", reports);
+    if (fix) { const p = P(cur), st = district(cur).stops.find((x) => x.id === s.id); const n = { ...JSON.parse(JSON.stringify(st)), ll: [gps.lat, gps.lon] }; delete n.q; if (p.add[s.id]) p.add[s.id].stop = n; else p.stops[s.id] = n; savePatch(); }
+    $("#dRep").close(); renderRoute();
+    toast(fix ? "已记下，这一站已挪到你现在的位置" : "已记下。回家在首页点“发给 Claude”", 3000);
+  };
+  $("#dRep").showModal();
+}
+function reportText() {
+  const lines = reports.map((r, i) => `${i + 1}. ${r.date} ${r.d} 区 ${r.addr}：${r.cats.join("、") || "（没选类型）"}${r.text ? " —— " + r.text : ""}${r.gps ? `（我当时的位置 ${r.gps.join(",")}，±${r.acc} m${r.fixed ? "，已在手机上把这一站挪到这里" : ""}）` : ""}`);
+  return `送报 App 报告（${reports.length} 条，数据版本 ${base.v}）：\n${lines.join("\n")}\n\n下面是原始数据，给 Claude 看的：\n` + JSON.stringify({ app: "送报路线", v: base.v, reports, patch });
+}
+async function shareText(title, t) {
+  try { if (navigator.share) await navigator.share({ title, text: t }); else { await navigator.clipboard.writeText(t); toast("已复制，粘贴给 Claude"); } }
+  catch (e) { if (e && e.name === "AbortError") return; try { await navigator.clipboard.writeText(t); toast("已复制，粘贴给 Claude"); } catch (e2) { prompt("复制下面的内容", t); } }
+}
+
 // ---------- 设置 ----------
 $("#btnSet").onclick = () => {
   const n = Object.values(patch).reduce((a, p) => a + Object.keys(p.stops || {}).length + Object.keys(p.add || {}).length + Object.keys(p.del || {}).length + (p.order ? 1 : 0), 0);
   $("#sBody").innerHTML = `<p>数据版本：<b>${h(base.v)}</b></p><button id="sUpd" style="width:100%">检查更新</button>
     <p>本机修改：<b>${n}</b> 处<br><span class="muted">调顺序、改份数这些只存在这台手机上。发给 Claude 后它会并进正式数据，下次更新就都有了。</span></p>
-    <button id="sExp" class="pri" style="width:100%">导出本机修改（复制 / 分享）</button>
+    <button id="sExp" class="pri" style="width:100%">导出本机修改${reports.length ? `和 ${reports.length} 条报告` : ""}（复制 / 分享）</button>
     <button id="sReset" style="width:100%;margin-top:8px">清除本机修改</button>
     <button id="sProg" style="width:100%;margin-top:8px">清空${iso(date).slice(5)}的送达记录</button>
     <button id="sLock" style="width:100%;margin-top:8px;color:var(--warn)">忘记密码（重新解锁）</button>`;
   $("#sUpd").onclick = () => checkUpdate(true);
-  $("#sExp").onclick = async () => {
-    const t = JSON.stringify({ app: "送报路线", v: base.v, patch }, null, 1);
-    try { if (navigator.share) await navigator.share({ title: "送报路线修改", text: t }); else { await navigator.clipboard.writeText(t); toast("已复制，粘贴给 Claude"); } }
-    catch (e) { try { await navigator.clipboard.writeText(t); toast("已复制，粘贴给 Claude"); } catch (e2) { prompt("复制下面的内容", t); } }
-  };
+  $("#sExp").onclick = () => shareText("送报路线修改", reports.length ? reportText() : JSON.stringify({ app: "送报路线", v: base.v, patch }, null, 1));
   $("#sReset").onclick = () => { if (confirm("清除这台手机上的所有修改？")) { patch = {}; savePatch(); renderHome(); $("#dSet").close(); } };
   $("#sProg").onclick = () => { if (confirm("清空这一天的送达记录？")) { base.districts.forEach((d) => LS.del(progKey(d.id))); renderHome(); $("#dSet").close(); } };
   $("#sLock").onclick = () => { if (confirm("忘记密码？下次打开要重新输入。")) { LS.del("pw"); location.reload(); } };
@@ -505,14 +599,16 @@ function startGPS() {
     const ll = [gps.lat, gps.lon];
     if (!me) me = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="me"></div>', iconSize: [0, 0] }), zIndexOffset: 2000, interactive: false });
     me.setLatLng(ll); if (map && !layers.pins.hasLayer(me)) me.addTo(layers.pins);
-    updDist(); if (follow && view === "map" && !startGPS.fitted) { startGPS.fitted = true; fitCur(); }
+    drawLeg(); updDist(); if (follow && view === "map" && !startGPS.fitted) { startGPS.fitted = true; fitCur(); }
+    else if (follow && view === "map" && map && !map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll);  // 跟随模式：我走出屏幕就跟过去（不改缩放）
   }, () => toast("没有定位权限：地图上不显示你的位置"), { enableHighAccuracy: true, maximumAge: 3000 });
 }
 function dist(a, b) { const R = 6371000, r = Math.PI / 180, x = (b[1] - a[1]) * r * Math.cos(((a[0] + b[0]) / 2) * r), y = (b[0] - a[0]) * r; return Math.hypot(x, y) * R; }
 function updDist() {
   const e = $("#dist"); if (!e || !gps || !cur) return; const { c } = state(); if (!c) return;
-  const m = dist([gps.lat, gps.lon], c.ll); e.textContent = m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
-  e.classList.toggle("near", m < 25);
+  const air = dist([gps.lat, gps.lon], c.ll), m = legM != null ? Math.max(legM, air) : air;  // 有路线就按路线算还有多远
+  e.textContent = m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+  e.classList.toggle("near", air < 25);
 }
 let wake = null;
 async function requestWake() { try { wake = await navigator.wakeLock?.request("screen"); } catch (e) {} }
