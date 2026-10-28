@@ -6,7 +6,8 @@ const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon
   "https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(V).then((c) => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener("activate", (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== V && k !== "tiles").map((k) => caches.delete(k)))));
+  // 同域名下还有 Wortkarten：只清自己的旧版本缓存
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k.startsWith("songbao") && k !== V).map((k) => caches.delete(k)))));
   self.clients.claim();
 });
 self.addEventListener("fetch", (e) => {
