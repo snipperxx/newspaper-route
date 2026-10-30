@@ -231,8 +231,14 @@ function district(id) {
     list.forEach((s, i) => { if (!p.order.includes(s.id)) { const prev = list.slice(0, i).reverse().find((x) => res.includes(x)); res.splice(prev ? res.indexOf(prev) + 1 : 0, 0, s); } });
     list = res;
   }
-  return { ...d, stops: list, baseIdx: Object.fromEntries(d.stops.map((s, i) => [s.id, i])) };
+  // 取报点当第 1 站：导航先带你去拿报纸，点「已取报」再开始送。位置在手机上挪过（报告里的“导航位置不对”）就用挪过的
+  const pk = { id: "@pick", pick: true, addr: d.pickup.addr, ll: p.stops?.["@pick"]?.ll || d.pickup.ll,
+    r: [{ id: "@pick", name: "取报纸", paper: "取", n: 1, days: [1, 2, 3, 4, 5, 6], note: [d.pickup.note, d.reserve ? `备用报 ${d.reserve} 份` : ""].filter(Boolean).join("；"), tag: "", paused: false }] };
+  return { ...d, stops: [pk, ...list], baseIdx: Object.fromEntries(d.stops.map((s, i) => [s.id, i])) };
 }
+const real = (xs) => xs.filter((s) => !s.pick);
+// 站号：取报点显示「取」，送报的站从 1 开始数
+const stopNo = (todays, s) => (s.pick ? "取" : todays.indexOf(s) + (todays[0]?.pick ? 0 : 1));
 const wday = () => date.getDay(); // 0 = 周日
 const recToday = (r, wd) => !r.paused && r.days.includes(wd);
 const stopToday = (s, wd) => s.r.some((r) => recToday(r, wd));
@@ -250,7 +256,7 @@ function renderHome() {
   const ds = base.districts;
   $("#dlist").innerHTML = wd === 0 ? `<div class="card muted">周日不送报。用 ◀ ▶ 换一天看。</div>` : "" +
     ds.map((d0) => {
-      const d = district(d0.id), on = activeOn(d), todays = d.stops.filter((s) => stopToday(s, wd)), pr = prog(d.id);
+      const d = district(d0.id), on = activeOn(d), todays = real(d.stops.filter((s) => stopToday(s, wd))), pr = prog(d.id);
       const n = todays.length, k = todays.filter((s) => pr.done.includes(s.id)).length;
       const papers = todays.reduce((a, s) => a + s.r.filter((r) => recToday(r, wd)).reduce((b, r) => b + r.n, 0), 0);
       const mins = pr.t0 && pr.t1 ? Math.round((pr.t1 - pr.t0) / 60000) : null;
@@ -307,7 +313,9 @@ function initMap() {
 function state() {
   const d = district(cur), wd = wday(), pr = prog(cur);
   const todays = d.stops.filter((s) => stopToday(s, wd));
-  let c = todays.find((s) => s.id === pr.cur && !pr.done.includes(s.id)) || todays.find((s) => !pr.done.includes(s.id)) || null;
+  // 已经送了别的站就当报纸拿过了，不再回头指向取报点
+  const left = (s) => !pr.done.includes(s.id) && !(s.pick && pr.done.some((x) => x !== s.id));
+  let c = todays.find((s) => s.id === pr.cur && left(s)) || todays.find(left) || null;
   return { d, wd, pr, todays, c, ci: c ? todays.indexOf(c) : todays.length };
 }
 // 从 a 到 b 的路线：基础顺序里 a 在 b 前面就拼接中间各段，否则画直线（顺序被改过）
@@ -319,16 +327,15 @@ function pathBetween(d, a, b) {
 function renderRoute(fit) {
   if (!cur) return;
   const { d, wd, pr, todays, c, ci } = state();
-  $("#rTitle").textContent = d.title; $("#rProg").textContent = `${pr.done.filter((id) => todays.some((s) => s.id === id)).length}/${todays.length}`;
+  $("#rTitle").textContent = d.title; $("#rProg").textContent = `${pr.done.filter((id) => real(todays).some((s) => s.id === id)).length}/${real(todays).length}`;
   if (view === "map") renderMap(d, wd, pr, todays, c, ci, fit); else renderList(d, wd, pr, todays, c);
 }
 function renderMap(d, wd, pr, todays, c, ci, fit) {
   layers.all.clearLayers(); layers.leg.clearLayers(); layers.pins.clearLayers();
   L.polyline(d.legs.flat(), { color: "#6b7280", weight: 4, opacity: .35 }).addTo(layers.all);
   const pin = (ll, txt, cls, z) => L.marker(ll, { icon: L.divIcon({ className: "", html: `<div class="pin ${cls}">${txt}</div>`, iconSize: [0, 0] }), zIndexOffset: z || 0, keyboard: false });
-  pin(d.pickup.ll, "取", "pick").addTo(layers.pins);
   pin(d.end.ll, "终", "end").addTo(layers.pins);
-  todays.forEach((s, i) => { const m = pin(s.ll, i + 1, s === c ? "cur" : pr.done.includes(s.id) ? "done" : "", s === c ? 1000 : 0).addTo(layers.pins); m.on("click", () => { pr.cur = s.id; setProg(cur, pr); renderRoute(); }); });
+  todays.forEach((s) => { const m = pin(s.ll, stopNo(todays, s), s === c ? "cur" : pr.done.includes(s.id) || (s.pick && pr.done.length) ? "done" : s.pick ? "pick" : "", s === c ? 1000 : 0).addTo(layers.pins); m.on("click", () => { pr.cur = s.id; setProg(cur, pr); renderRoute(); }); });
   if (me) me.addTo(layers.pins);
   renderSheet(d, wd, pr, todays, c, ci);
   drawLeg();
@@ -403,7 +410,7 @@ function renderSheet(d, wd, pr, todays, c, ci) {
   if (!c) {
     const mins = pr.t0 && pr.t1 ? Math.round((pr.t1 - pr.t0) / 60000) : null;
     const next = base.districts.map((x) => district(x.id)).find((x) => x.id !== cur && activeOn(x) && x.stops.some((s) => stopToday(s, wd)) && x.stops.filter((s) => stopToday(s, wd)).some((s) => !prog(x.id).done.includes(s.id)));
-    el.innerHTML = `<div class="done-box"><b>✓ ${h(d.id)} 送完了</b><p class="muted">${todays.length} 站${mins != null ? ` · 用时 ${mins} 分钟` : ""} · 下一步：${h(d.end.label)}（${h(d.end.addr)}）</p>
+    el.innerHTML = `<div class="done-box"><b>✓ ${h(d.id)} 送完了</b><p class="muted">${real(todays).length} 站${mins != null ? ` · 用时 ${mins} 分钟` : ""} · 下一步：${h(d.end.label)}（${h(d.end.addr)}）</p>
       ${next ? `<button class="pri" id="goNext" style="width:100%">去 ${h(next.id)} 区</button>` : `<button id="goHome" style="width:100%">回首页</button>`}
       <div class="row3" style="margin-top:8px"><button id="bUndo">◀ 撤销最后一站</button><button id="bNav">导航到终点</button></div></div>`;
     if (next) $("#goNext").onclick = () => openDistrict(next.id); else $("#goHome").onclick = goHome;
@@ -411,14 +418,13 @@ function renderSheet(d, wd, pr, todays, c, ci) {
     return;
   }
   const rt = c.r.filter((r) => recToday(r, wd)), ro = c.r.filter((r) => !recToday(r, wd));
-  const start = ci === 0 && !pr.done.length ? `<div class="muted" style="margin-bottom:6px">先到取报点：<b>${h(d.pickup.addr)}</b>（${h(d.pickup.note)}）${d.reserve ? `，备用报 ${d.reserve} 份` : ""}</div>` : "";
-  el.innerHTML = `${start}<div class="addr"><span class="n">${ci + 1}</span><span style="flex:1">${h(c.addr)}</span><span id="dist" class="dist"></span><button class="ed" id="bEd" style="padding:4px 10px">✎</button></div>
+  el.innerHTML = `<div class="addr"><span class="n">${stopNo(todays, c)}</span><span style="flex:1">${c.pick ? "取报点 " : ""}${h(c.addr)}</span><span id="dist" class="dist"></span>${c.pick ? "" : `<button class="ed" id="bEd" style="padding:4px 10px">✎</button>`}</div>
     ${rt.map((r) => recHTML(r, wd)).join("")}
     ${ro.length ? `<div class="other">今天不送：${ro.map((r) => `${h(r.name)}（${h(r.paper)}，${dayTxt(r)}）`).join("；")}</div>` : ""}
-    <button class="done-btn" id="bDone">✓ 已送达</button>
+    <button class="done-btn" id="bDone">${c.pick ? "✓ 已取报" : "✓ 已送达"}</button>
     <div class="row3"><button id="bPrev" ${ci === 0 ? "disabled" : ""}>◀ 上一站</button><button id="bSkip">跳过 ▶</button><button id="bNav">导航</button><button id="bRep">⚠ 报告</button></div>`;
   updDist();
-  $("#bEd").onclick = () => openEdit(c.id);
+  if (!c.pick) $("#bEd").onclick = () => openEdit(c.id);
   $("#bRep").onclick = () => openReport(c);
   $("#bPrev").onclick = () => { const p = todays[ci - 1]; pr.done = pr.done.filter((x) => x !== p.id); pr.cur = p.id; setProg(cur, pr); follow = true; renderRoute(); };
   $("#bSkip").onclick = () => { const n = todays.slice(ci + 1).find((s) => !pr.done.includes(s.id)); if (n) { pr.cur = n.id; setProg(cur, pr); follow = true; renderRoute(); } else toast("后面没有了；没送的站在列表里还看得到"); };
@@ -448,9 +454,9 @@ function renderList(d, wd, pr, todays, c) {
     const k = todays.indexOf(s), on = k >= 0, done = pr.done.includes(s.id);
     const rs = s.r.filter((r) => (on ? recToday(r, wd) : true));
     return `<div class="li ${done ? "isdone" : ""} ${s === c ? "iscur" : ""} ${on ? "" : "nottoday"}" data-id="${h(s.id)}">
-      <div class="in"><span class="k">${on ? k + 1 : "–"}</span><div class="body"><div class="a">${h(s.addr)}</div>
+      <div class="in"><span class="k">${on ? stopNo(todays, s) : "–"}</span><div class="body"><div class="a">${h(s.addr)}</div>
       ${rs.map((r) => `<div class="muted"><span class="pp ${PAPERS.includes(r.paper) ? h(r.paper) : "X"}" style="font-size:11px;min-width:30px">${h(r.paper)}</span>${r.n > 1 ? ` <span class="cnt">×${r.n}</span>` : ""} ${h(r.name)}${on ? "" : ` · ${dayTxt(r)}`}${r.note ? ` <span style="color:var(--warn)">${h(r.note)}</span>` : ""}</div>`).join("")}</div>
-      ${sorting ? `<div class="mv"><button data-up>↑</button><button data-down>↓</button></div>` : `${on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : ""}<button class="ed" data-ed>✎</button>`}</div></div>`;
+      ${s.pick ? (sorting ? "" : on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : "") : sorting ? `<div class="mv"><button data-up>↑</button><button data-down>↓</button></div>` : `${on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : ""}<button class="ed" data-ed>✎</button>`}</div></div>`;
   }).join("") || `<p class="muted" style="text-align:center">没有要显示的站</p>`;
   $("#list").querySelectorAll(".li").forEach((li) => {
     const id = li.dataset.id;
@@ -470,7 +476,7 @@ $("#lAll").onclick = () => { if (sorting) sorting = false; else showAll = !showA
 $("#lSort").onclick = () => { sorting = !sorting; renderRoute(); };
 $("#lAdd").onclick = () => addStop();
 function move(id, dir) {
-  const d = district(cur), ids = d.stops.map((s) => s.id), i = ids.indexOf(id), j = i + dir;
+  const d = district(cur), ids = real(d.stops).map((s) => s.id), i = ids.indexOf(id), j = i + dir;
   if (j < 0 || j >= ids.length) return;
   [ids[i], ids[j]] = [ids[j], ids[i]]; P(cur).order = ids; savePatch(); renderRoute();
 }
@@ -531,7 +537,7 @@ $("#eDel").onclick = () => {
 };
 function addStop() {
   const { c } = state();
-  openEdit(null, { id: "new:" + Date.now(), addr: "", ll: gps ? [gps.lat, gps.lon] : null, _after: c ? c.id : null,
+  openEdit(null, { id: "new:" + Date.now(), addr: "", ll: gps ? [gps.lat, gps.lon] : null, _after: c && !c.pick ? c.id : null,
     r: [{ id: "n1", name: "", paper: "K", n: 1, days: [1, 2, 3, 4, 5, 6], note: "", tag: "", paused: false }] });
 }
 document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => b.closest("dialog").close()));
