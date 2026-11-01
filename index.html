@@ -42,7 +42,8 @@ header button{padding:6px 10px}
 .pin.cur{background:var(--cur);width:38px;height:38px;margin:-19px 0 0 -19px;font-size:16px;line-height:34px;z-index:1000!important}
 .pin.pick{background:#15803d}
 .pin.end{background:#7c3aed}
-.me{width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 2px #2563eb55}
+.me .ar{position:absolute;left:50%;top:50%;width:0;height:0;display:none}.me.hasH .ar{display:block}.me .ar::before{content:"";position:absolute;left:-8px;top:-30px;border:8px solid transparent;border-bottom:15px solid #2563eb;border-top:0;filter:drop-shadow(0 0 1px #fff)}
+.me{position:relative;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 2px #2563eb55}
 .mapbtns{position:absolute;right:10px;top:10px;z-index:800;display:flex;flex-direction:column;gap:8px}
 .mapbtns button{padding:8px 10px;box-shadow:0 1px 4px #0003}.mapbtns button.on{background:#2563eb;color:#fff}
 #bNorth{color:#dc2626;font-size:14px}#nArrow{display:inline-block;transition:transform .1s}
@@ -305,7 +306,7 @@ function initMap() {
   map.on("dragstart", () => (follow = false));
   // 两指可以转地图；角度记住，下次打开还是这个方向。红箭头指北，点一下转回正北
   const north = () => { $("#nArrow").style.transform = `rotate(${-map.getBearing()}deg)`; };
-  map.on("rotate", () => { north(); if (!ownRot && headMode) setHeadMode(false); });  // 手动两指转地图 → 退出朝向模式
+  map.on("rotate", () => { north(); drawArrow(); if (!ownRot && headMode) setHeadMode(false); });  // 手动两指转地图 → 退出朝向模式
   map.on("moveend", () => LS.set("bearing", map.getBearing())); north();
   $("#bNorth").onclick = () => { setHeadMode(false); map.setBearing(0); LS.set("bearing", 0); };
   $("#bHead").onclick = () => setHeadMode(!headMode);
@@ -319,11 +320,17 @@ function initMap() {
 let headMode = LS.get("headMode", false), headDeg = null, headAt = 0, gpsHead = null, ownRot = false, compassOn = false;
 const angDiff = (a, b) => ((a - b + 540) % 360) - 180;
 function applyHead(h) {
-  if (!headMode || !map || h == null || isNaN(h)) return;
+  if (!map || h == null || isNaN(h)) return;
   headDeg = headDeg == null ? h : (headDeg + angDiff(h, headDeg) * 0.3 + 360) % 360;
+  drawArrow();
   const now = Date.now(), want = (360 - headDeg) % 360;
-  if (now - headAt < 150 || Math.abs(angDiff(want, map.getBearing())) < 2) return;
+  if (!headMode || now - headAt < 150 || Math.abs(angDiff(want, map.getBearing())) < 2) return;
   headAt = now; ownRot = true; try { map.setBearing(want); } finally { ownRot = false; }
+}
+// 蓝点上的小箭头：屏幕角度 = 真实朝向 + 地图转过的角度
+function drawArrow() {
+  const el = me?.getElement()?.querySelector(".me"); if (!el || headDeg == null) return;
+  el.classList.add("hasH"); el.querySelector(".ar").style.transform = `rotate(${headDeg + (map ? map.getBearing() : 0)}deg)`;
 }
 function onCompass(e) {
   if (gpsHead && Date.now() - gpsHead.t < 4000) return;  // 正在走：以 GPS 方向为准
@@ -343,7 +350,7 @@ async function startCompass() {
   window.addEventListener("ondeviceorientationabsolute" in window ? "deviceorientationabsolute" : "deviceorientation", onCompass, true);
 }
 function setHeadMode(on) {
-  headMode = on; LS.set("headMode", on); headDeg = null;
+  headMode = on; LS.set("headMode", on);
   $("#bHead")?.classList.toggle("on", on);
   if (on) { startCompass(); toast("地图朝向你面对的方向（手动转地图会退出）"); }
 }
@@ -463,23 +470,64 @@ function renderSheet(d, wd, pr, todays, c, ci) {
   updDist();
   if (!c.pick) $("#bEd").onclick = () => openEdit(c.id);
   $("#bRep").onclick = () => openReport(c);
-  $("#bPrev").onclick = () => { const p = todays[ci - 1]; pr.done = pr.done.filter((x) => x !== p.id); pr.cur = p.id; setProg(cur, pr); follow = true; renderRoute(); };
+  $("#bPrev").onclick = () => { const p = todays[ci - 1]; if (pr.done.includes(p.id)) logEv("undo", p.id); pr.done = pr.done.filter((x) => x !== p.id); pr.cur = p.id; setProg(cur, pr); follow = true; renderRoute(); };
   $("#bSkip").onclick = () => { const n = todays.slice(ci + 1).find((s) => !pr.done.includes(s.id)); if (n) { pr.cur = n.id; setProg(cur, pr); follow = true; renderRoute(); } else toast("后面没有了；没送的站在列表里还看得到"); };
   $("#bNav").onclick = () => nav(c.ll, c.q);
   $("#bDone").onclick = () => { if (Date.now() - deliver.at < 700) return; deliver.at = Date.now(); deliver(c.id); };  // 防连点：按一下只算一站
 }
 function deliver(id) {
-  const pr = prog(cur); if (!pr.done.includes(id)) pr.done.push(id);
+  const pr = prog(cur); if (!pr.done.includes(id)) { pr.done.push(id); logEv(district(cur).stops.find((x) => x.id === id)?.pick ? "pick" : "deliver", id); }
   const now = Date.now(); pr.t0 = pr.t0 || now;
   const { todays } = state(), i = todays.findIndex((s) => s.id === id);
   const n = todays.slice(i + 1).find((s) => !pr.done.includes(s.id)) || todays.find((s) => !pr.done.includes(s.id));
-  pr.cur = n ? n.id : null; if (!n) pr.t1 = now;
+  pr.cur = n ? n.id : null; if (!n) { pr.t1 = now; logEv("finish"); }
   setProg(cur, pr); if (navigator.vibrate) navigator.vibrate(40); follow = true; renderRoute();
 }
-function undoLast() { const pr = prog(cur); const id = pr.done.pop(); pr.cur = id || null; pr.t1 = null; setProg(cur, pr); follow = true; renderRoute(); }
+function undoLast() { const pr = prog(cur); const id = pr.done.pop(); if (id) logEv("undo", id); pr.cur = id || null; pr.t1 = null; setProg(cur, pr); follow = true; renderRoute(); }
 // q = Google 自己认得的地址（导出时核对过，跟地图上的点对得上）；没有 q 或位置在手机上改过就用坐标
 function nav(ll, q) { location.href = `https://www.google.com/maps/dir/?api=1&destination=${q ? encodeURIComponent(q) : `${ll[0]},${ll[1]}`}&travelmode=bicycling`; }
 deliver.at = 0;
+
+// ---------- 计时记录 + 自动上传 ----------
+// 每次点 取报/送达/撤销 记一条 {t 时间戳, k 类型, d 区, s 站点 id, p [纬度, 经度, 精度]}；开始送之后 45 分钟内每 ≥8 s 且移动 ≥20 m 记一个轨迹点。
+// 整天的记录存在手机里，有改动就整份 POST 到 Cloudflare Worker（存进 KV，只有 Claude/你能读）；没网会重试，回到 App 或恢复网络时补传。
+const LOG_URL = "https://songbao-log.snipperxx.workers.dev/log";
+const devId = LS.get("devId", null) || (() => { const x = Math.random().toString(36).slice(2, 6); LS.set("devId", x); return x; })();
+const logKey = (day) => "log." + day, logDay = () => iso(new Date());
+let logOn = LS.get("logUpload", true), upT = null, upBusy = false;
+const logGet = (day) => LS.get(logKey(day), { ev: [], trk: [] });
+const dirtyDays = () => LS.get("logDirty", []);
+function markDirty(day) { const a = dirtyDays(); if (!a.includes(day)) { a.push(day); LS.set("logDirty", a); } }
+function logEv(k, sid) {
+  const day = logDay(), L = logGet(day), now = Date.now(), e = { t: now, k, d: cur, s: sid || null };
+  if (gps && now - gps.t < 60000) e.p = [+gps.lat.toFixed(6), +gps.lon.toFixed(6), Math.round(gps.acc)];
+  L.ev.push(e); LS.set(logKey(day), L); markDirty(day); uploadSoon(3000);
+}
+function traceGps() {
+  const day = logDay(), L = logGet(day), last = L.ev[L.ev.length - 1], now = Date.now();
+  if (!last || now - last.t > 45 * 60000) return;
+  const tp = L.trk[L.trk.length - 1];
+  if (tp && (now - tp[0] < 8000 || (now - tp[0] < 30000 && dist([tp[1], tp[2]], [gps.lat, gps.lon]) < 20))) return;
+  L.trk.push([now, +gps.lat.toFixed(5), +gps.lon.toFixed(5), Math.round(gps.acc)]); LS.set(logKey(day), L); markDirty(day); uploadSoon(120000, true);
+}
+function uploadSoon(ms, keep) { if (!logOn || (keep && upT)) return; clearTimeout(upT); upT = setTimeout(() => { upT = null; uploadLogs(); }, ms); }
+async function uploadLogs() {
+  if (!logOn || upBusy || !navigator.onLine) return; upBusy = true;
+  try {
+    for (const day of dirtyDays()) {
+      const L = logGet(day);
+      const r = await fetch(LOG_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ day, dev: devId, v: base?.v, ev: L.ev, trk: L.trk }) });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const L2 = logGet(day);  // 上传的时候又有新记录就继续算没传完
+      if (L2.ev.length === L.ev.length && L2.trk.length === L.trk.length) LS.set("logDirty", dirtyDays().filter((x) => x !== day));
+      LS.set("logUp", Date.now());
+    }
+    LS.del("logErr");
+  } catch (e) { LS.set("logErr", String(e.message || e)); uploadSoon(60000); }
+  finally { upBusy = false; }
+}
+window.addEventListener("online", () => uploadSoon(1000));
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && dirtyDays().length) uploadSoon(1000); });
 
 // ---------- 列表 ----------
 function renderList(d, wd, pr, todays, c) {
@@ -502,7 +550,7 @@ function renderList(d, wd, pr, todays, c) {
     li.querySelector("[data-down]")?.addEventListener("click", (e) => { e.stopPropagation(); move(id, 1); });
     li.querySelector("[data-ck]")?.addEventListener("click", (e) => {
       e.stopPropagation(); const pr = prog(cur);
-      if (pr.done.includes(id)) { pr.done = pr.done.filter((x) => x !== id); pr.t1 = null; } else { pr.done.push(id); pr.t0 = pr.t0 || Date.now(); }
+      if (pr.done.includes(id)) { pr.done = pr.done.filter((x) => x !== id); pr.t1 = null; logEv("undo", id); } else { pr.done.push(id); pr.t0 = pr.t0 || Date.now(); logEv(district(cur).stops.find((x) => x.id === id)?.pick ? "pick" : "deliver", id); }
       setProg(cur, pr); if (navigator.vibrate) navigator.vibrate(30); renderRoute();
     });
     if (!sorting && todays.some((s) => s.id === id)) li.querySelector(".in").addEventListener("click", () => { const pr = prog(cur); pr.cur = id; setProg(cur, pr); follow = true; setView("map"); });
@@ -622,9 +670,19 @@ $("#btnSet").onclick = () => {
   $("#sBody").innerHTML = `<p>数据版本：<b>${h(base.v)}</b></p><button id="sUpd" style="width:100%">检查更新</button>
     <p>本机修改：<b>${n}</b> 处<br><span class="muted">调顺序、改份数这些只存在这台手机上。发给 Claude 后它会并进正式数据，下次更新就都有了。</span></p>
     <button id="sExp" class="pri" style="width:100%">导出本机修改${reports.length ? `和 ${reports.length} 条报告` : ""}（复制 / 分享）</button>
+    <p>计时上传：<b id="sLogSt"></b><br><span class="muted">每次取报/送达的时间（和位置）会自动传到云上，Claude 能读到，用来分析。</span></p>
+    <div class="row3"><button id="sLogOn"></button><button id="sLogNow">立即上传</button></div>
     <button id="sReset" style="width:100%;margin-top:8px">清除本机修改</button>
     <button id="sProg" style="width:100%;margin-top:8px">清空${iso(date).slice(5)}的送达记录</button>
     <button id="sLock" style="width:100%;margin-top:8px;color:var(--warn)">忘记密码（重新解锁）</button>`;
+  const logSt = () => {
+    const L = logGet(logDay()), up = LS.get("logUp", 0), err = LS.get("logErr", null), pend = dirtyDays().length;
+    $("#sLogSt").textContent = `${logOn ? "开" : "关"} · 今天 ${L.ev.filter((e) => e.k === "deliver").length} 站送达${L.trk.length ? ` · 轨迹 ${L.trk.length} 点` : ""} · ${err ? "上传失败（" + err + "），会重试" : pend ? "有 " + pend + " 天待传" : up ? "已传，" + new Date(up).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "还没有记录"}`;
+    $("#sLogOn").textContent = logOn ? "关闭自动上传" : "开启自动上传";
+  };
+  logSt();
+  $("#sLogOn").onclick = () => { logOn = !logOn; LS.set("logUpload", logOn); if (logOn) uploadSoon(500); logSt(); };
+  $("#sLogNow").onclick = async () => { markDirty(logDay()); const was = logOn; logOn = true; await uploadLogs(); logOn = was; logSt(); toast(LS.get("logErr", null) ? "上传失败" : "已上传"); };
   $("#sUpd").onclick = () => checkUpdate(true);
   $("#sExp").onclick = () => shareText("送报路线修改", reports.length ? reportText() : JSON.stringify({ app: "送报路线", v: base.v, patch }, null, 1));
   $("#sReset").onclick = () => { if (confirm("清除这台手机上的所有修改？")) { patch = {}; savePatch(); renderHome(); $("#dSet").close(); } };
@@ -637,12 +695,13 @@ $("#btnSet").onclick = () => {
 let gps = null, watch = null;
 function startGPS() {
   if (watch != null || !navigator.geolocation) return;
+  startCompass();  // 蓝点上的箭头也要朝向（不开朝向模式也显示）
   watch = navigator.geolocation.watchPosition((p) => {
-    gps = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy };
+    gps = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, t: Date.now() }; traceGps();
     if (p.coords.heading != null && !isNaN(p.coords.heading) && p.coords.speed > 0.8) { gpsHead = { t: Date.now() }; applyHead(p.coords.heading); }
     const ll = [gps.lat, gps.lon];
-    if (!me) me = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="me"></div>', iconSize: [0, 0] }), zIndexOffset: 2000, interactive: false });
-    me.setLatLng(ll); if (map && !layers.pins.hasLayer(me)) me.addTo(layers.pins);
+    if (!me) me = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="me"><i class="ar"></i></div>', iconSize: [0, 0] }), zIndexOffset: 2000, interactive: false });
+    me.setLatLng(ll); if (map && !layers.pins.hasLayer(me)) me.addTo(layers.pins); drawArrow();
     drawLeg(); updDist(); if (follow && view === "map" && !startGPS.fitted) { startGPS.fitted = true; fitCur(); }
     else if (follow && view === "map" && map && !map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll);  // 跟随模式：我走出屏幕就跟过去（不改缩放）
   }, () => toast("没有定位权限：地图上不显示你的位置"), { enableHighAccuracy: true, maximumAge: 3000 });
