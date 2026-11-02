@@ -46,6 +46,7 @@ header button{padding:6px 10px}
 .me{position:relative;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 2px #2563eb55}
 .mapbtns{position:absolute;right:10px;top:10px;z-index:800;display:flex;flex-direction:column;gap:8px}
 .mapbtns button{padding:8px 10px;box-shadow:0 1px 4px #0003}.mapbtns button.on{background:#2563eb;color:#fff}
+.mapbtns .wonly{display:none}@media (min-width:900px){.mapbtns .wonly{display:block}}
 #bNorth{color:#dc2626;font-size:14px}#nArrow{display:inline-block;transition:transform .1s}
 #sheet{background:var(--card);border-top:1px solid var(--line);padding:12px 12px max(12px,env(safe-area-inset-bottom));max-height:52vh;overflow:auto}
 .addr{font-size:22px;font-weight:800;display:flex;align-items:baseline;gap:8px}
@@ -154,7 +155,7 @@ input,select,textarea{font:inherit;width:100%;padding:8px 10px;border:1px solid 
   <div id="rbody">
   <div id="mapView" style="flex:1;display:flex;flex-direction:column;min-height:0">
     <div style="position:relative;flex:1;display:flex;min-height:0"><div id="map"></div>
-      <div class="mapbtns"><button id="bNorth" title="转回正北"><span id="nArrow">▲</span></button><button id="bHead" title="地图朝向我面对的方向">🧭</button><button id="bFit" title="看我和下一站">◎</button><button id="bAll" title="看全区">▦</button></div></div>
+      <div class="mapbtns"><button id="bNorth" title="转回正北"><span id="nArrow">▲</span></button><button id="bRotL" class="wonly" title="向左转 15°（也可以：按住右键拖动，或 Shift + 滚轮）">⟲</button><button id="bRotR" class="wonly" title="向右转 15°">⟳</button><button id="bHead" title="地图朝向我面对的方向">🧭</button><button id="bFit" title="看我和下一站">◎</button><button id="bAll" title="看全区">▦</button></div></div>
     <div id="sheet"></div>
   </div>
   <div id="listView" class="hide" style="flex:1;display:flex;flex-direction:column;min-height:0">
@@ -335,6 +336,16 @@ function initMap() {
   map.on("moveend", () => LS.set("bearing", map.getBearing())); north();
   $("#bNorth").onclick = () => { setHeadMode(false); map.setBearing(0); LS.set("bearing", 0); };
   $("#bHead").onclick = () => setHeadMode(!headMode);
+  // 电脑上转地图：⟲ ⟳ 按钮每次 15°；按住右键拖动（绕地图中心转）；Shift + 滚轮（leaflet-rotate 自带）
+  const turn = (b) => { setHeadMode(false); map.setBearing(b); LS.set("bearing", map.getBearing()); };
+  $("#bRotL").onclick = () => turn(map.getBearing() - 15);
+  $("#bRotR").onclick = () => turn(map.getBearing() + 15);
+  const ct = map.getContainer(); let rd = null;
+  const ang = (e) => { const r = ct.getBoundingClientRect(); return (Math.atan2(e.clientY - r.top - r.height / 2, e.clientX - r.left - r.width / 2) * 180) / Math.PI; };
+  ct.addEventListener("contextmenu", (e) => e.preventDefault());
+  ct.addEventListener("mousedown", (e) => { if (e.button === 2) { rd = { a: ang(e), b: map.getBearing() }; e.preventDefault(); } });
+  addEventListener("mousemove", (e) => { if (rd) map.setBearing(rd.b + ang(e) - rd.a); });
+  addEventListener("mouseup", () => { if (rd) { rd = null; LS.set("bearing", map.getBearing()); } });
   $("#bHead").classList.toggle("on", headMode); if (headMode) startCompass();
   $("#bFit").onclick = () => { follow = true; fitCur(); };
   $("#bAll").onclick = () => { follow = false; const d = district(cur); map.fitBounds(L.latLngBounds(d.stops.map((s) => s.ll).concat([d.pickup.ll])), { padding: [30, 30] }); };
@@ -419,7 +430,7 @@ function renderSortMap(d, fit) {
     m.on("click", () => { if (selId && selId !== s.id) moveAfter(selId, s.id); else select(s.id === selId ? null : s.id, true); });
   });
   $("#sheet").innerHTML = `<p class="muted" style="margin:0"><b>调整顺序</b>：拖右边的行；或者先点一站（行或地图上的点，变橙色），再点地图上另一站 → 移到它后面（点「取」= 移到第一站）。
-    虚线 = 顺序改过、还没有步行路线的段。改完自动同步到手机。</p>`;
+    虚线 = 顺序改过、还没有步行路线的段。改完自动同步到手机。转地图：右上 ⟲ ⟳，或按住右键拖动，或 Shift + 滚轮；红 ▲ 转回正北。</p>`;
   if (fit) map.fitBounds(L.latLngBounds(rs.map((s) => s.ll)), { padding: [30, 30] });  // 不含终点（常在很远的地方）
 }
 function select(id, fromMap) {
