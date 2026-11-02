@@ -82,6 +82,24 @@ header button{padding:6px 10px}
 .listtools{display:flex;gap:8px;padding:8px 10px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
 .listtools button{padding:6px 10px;font-size:14px}
 .mv{display:flex;flex-direction:column;gap:4px}.mv button{padding:2px 10px}
+/* 调整顺序：今天不送的站也能挪，不变灰；选中的站（点行或地图上的点）橙色；拖动时蓝线标插到哪 */
+#list.sorting .li.nottoday .in{opacity:1}
+#list.sorting .li.nottoday .a{color:var(--mute)}
+.li .nt{font-size:12px;font-weight:600;color:var(--mute);border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-left:6px}
+.li.sel{border-color:var(--cur);box-shadow:0 0 0 2px var(--cur)}
+#list.sorting .li[draggable=true]{cursor:grab}
+.li.dragging{opacity:.4}
+.li.dropB{box-shadow:0 -4px 0 var(--acc)}.li.dropA{box-shadow:0 4px 0 var(--acc)}
+.pin.sel{background:var(--cur);width:34px;height:34px;margin:-17px 0 0 -17px;font-size:14px;line-height:30px;z-index:1000!important}
+.pin.off{background:#9ca3af}
+/* 电脑（宽屏）：左边地图，右边列表，两个都显示 */
+#rbody{flex:1;display:flex;flex-direction:column;min-height:0}
+@media (min-width:900px){
+  #rbody{flex-direction:row}
+  #mapView,#listView{display:flex!important}
+  #listView{flex:0 0 440px!important;border-left:1px solid var(--line)}
+  #rMode{display:none}
+}
 /* 对话框 */
 dialog{border:0;border-radius:16px;padding:0;width:min(560px,94vw);max-height:90vh;background:var(--card);color:var(--fg)}
 dialog[open]{display:flex;flex-direction:column}
@@ -133,14 +151,16 @@ input,select,textarea{font:inherit;width:100%;padding:8px 10px;border:1px solid 
 <!-- 路线页 -->
 <div id="route" class="hide">
   <header><button id="rBack">◀</button><h1 id="rTitle"></h1><span id="rProg" class="muted"></span><button id="rMode">列表</button></header>
+  <div id="rbody">
   <div id="mapView" style="flex:1;display:flex;flex-direction:column;min-height:0">
     <div style="position:relative;flex:1;display:flex;min-height:0"><div id="map"></div>
       <div class="mapbtns"><button id="bNorth" title="转回正北"><span id="nArrow">▲</span></button><button id="bHead" title="地图朝向我面对的方向">🧭</button><button id="bFit" title="看我和下一站">◎</button><button id="bAll" title="看全区">▦</button></div></div>
     <div id="sheet"></div>
   </div>
   <div id="listView" class="hide" style="flex:1;display:flex;flex-direction:column;min-height:0">
-    <div class="listtools"><button id="lHide">隐藏已送</button><button id="lAll">显示今天不送的</button><button id="lSort">调整顺序</button><button id="lAdd">＋ 加一站</button></div>
+    <div class="listtools"><button id="lHide">隐藏已送</button><button id="lAll">显示今天不送的</button><button id="lSort">调整顺序</button><button id="lAdd">＋ 加一站</button><button id="lUndo" class="hide">↶ 撤销</button><button id="lReset" class="hide">恢复原顺序</button></div>
     <div id="list"></div>
+  </div>
   </div>
 </div>
 
@@ -177,6 +197,9 @@ let patch = LS.get("patch", {});   // 手机上自己改的：{区: {order, stop
 let date = new Date(); date.setHours(12, 0, 0, 0);
 let cur = null;                    // 当前打开的区 id
 let view = "map", hideDone = LS.get("hideDone", false), showAll = false, sorting = false;
+let selId = null, undoStack = [];  // 调整顺序：选中的站、撤销用的旧顺序
+const wide = () => matchMedia("(min-width:900px)").matches;  // 电脑：地图和列表同时显示
+const mapOn = () => view === "map" || wide(), listOn = () => view === "list" || wide();
 
 // ---------- 主题 ----------
 function applyTheme() {
@@ -212,14 +235,14 @@ function showUnlock(enc, err) {
   $("#pwerr").textContent = err || "";
   $("#pwok").onclick = async () => {
     const pw = $("#pw").value.trim(); if (!pw) return;
-    try { base = await decrypt(enc, pw); LS.set("pw", pw); LS.set("base", base); $("#unlock").classList.add("hide"); goHome(); }
+    try { base = await decrypt(enc, pw); LS.set("pw", pw); LS.set("base", base); $("#unlock").classList.add("hide"); goHome(); pullPatch(); }
     catch (e) { $("#pwerr").textContent = "密码不对"; }
   };
 }
 
 // ---------- 数据：基础 + 本机修改 ----------
 const P = (id) => (patch[id] = patch[id] || { order: null, stops: {}, del: {}, add: {} });
-function savePatch() { LS.set("patch", patch); }
+function savePatch() { LS.set("patch", patch); patchT = Date.now(); LS.set("patchT", patchT); pushSoon(); }
 function district(id) {
   const d = base.districts.find((x) => x.id === id); if (!d) return null;
   const p = patch[id] || { stops: {}, del: {}, add: {} };
@@ -286,6 +309,7 @@ $("#dNext").onclick = () => { date.setDate(date.getDate() + 1); renderHome(); };
 let map, layers = {}, me = null, follow = true;
 function openDistrict(id) {
   cur = id; $("#home").classList.add("hide"); $("#route").classList.remove("hide");
+  selId = null; undoStack = []; if (wide()) sorting = true;  // 电脑上打开就是调整顺序
   if (!map) initMap();
   setView(view); requestWake(); startGPS();
   renderRoute(true);
@@ -295,9 +319,10 @@ $("#rMode").onclick = () => setView(view === "map" ? "list" : "map");
 function setView(v) {
   view = v; $("#mapView").classList.toggle("hide", v !== "map"); $("#listView").classList.toggle("hide", v !== "list");
   $("#rMode").textContent = v === "map" ? "列表" : "地图";
-  if (v === "map" && map) setTimeout(() => { map.invalidateSize(); fitCur(); }, 50);
+  if (mapOn() && map) setTimeout(() => { map.invalidateSize(); fitCur(); }, 50);
   renderRoute();
 }
+matchMedia("(min-width:900px)").addEventListener("change", () => { if (map) setTimeout(() => map.invalidateSize(), 50); renderRoute(); });
 function initMap() {
   // 手机上 Leaflet 默认手指松开才加载新瓦片，拖的时候路线下面是空白，看着像飘着的一层 → 拖动中也加载，周围多留几圈瓦片；路线多画出屏幕一截
   map = L.map("map", { zoomControl: false, attributionControl: true, rotate: true, touchRotate: true, rotateControl: false, bearing: LS.get("bearing", 0), renderer: L.svg({ padding: 0.6 }) }).setView([47.677, 9.188], 16);
@@ -372,12 +397,40 @@ function renderRoute(fit) {
   if (!cur) return;
   const { d, wd, pr, todays, c, ci } = state();
   $("#rTitle").textContent = d.title; $("#rProg").textContent = `${pr.done.filter((id) => real(todays).some((s) => s.id === id)).length}/${real(todays).length}`;
-  if (view === "map") renderMap(d, wd, pr, todays, c, ci, fit); else renderList(d, wd, pr, todays, c);
+  $("#lUndo").classList.toggle("hide", !sorting || !undoStack.length); $("#lReset").classList.toggle("hide", !sorting || !patch[cur]?.order);
+  if (mapOn()) renderMap(d, wd, pr, todays, c, ci, fit);
+  if (listOn()) renderList(d, wd, pr, todays, c);
+}
+const pin = (ll, txt, cls, z) => L.marker(ll, { icon: L.divIcon({ className: "", html: `<div class="pin ${cls}">${txt}</div>`, iconSize: [0, 0] }), zIndexOffset: z || 0, keyboard: false });
+// 调整顺序时的地图：全区每一站都标出来（编号 = 全区顺序，今天不送的灰色），按现在的顺序连线。
+// 相邻两站在原顺序里也相邻 → 用原来的步行路线，否则画虚直线（顺序改过的地方）
+function renderSortMap(d, fit) {
+  const rs = real(d.stops), wd = wday(), ids = [d.stops[0].id, ...rs.map((s) => s.id)], lls = [d.pickup.ll, ...rs.map((s) => s.ll)];
+  for (let i = 0; i < ids.length; i++) {
+    const a = ids[i], b = ids[i + 1] || "@end", ib = b === "@end" ? d.legs.length - 1 : d.baseIdx[b], ia = a === "@pick" ? -1 : d.baseIdx[a];
+    if (ia != null && ib === ia + 1 && d.legs[ib]) L.polyline(d.legs[ib], { color: "#2563eb", weight: 4, opacity: .7 }).addTo(layers.all);
+    else L.polyline([lls[i], lls[i + 1] || d.end.ll], { color: "#2563eb", weight: 3, opacity: .8, dashArray: "6 6" }).addTo(layers.all);
+  }
+  pin(d.end.ll, "终", "end").addTo(layers.pins);
+  pin(d.pickup.ll, "取", "pick").addTo(layers.pins).on("click", () => { if (selId) moveAfter(selId, "@pick"); });
+  rs.forEach((s, i) => {
+    const m = pin(s.ll, i + 1, s.id === selId ? "sel" : stopToday(s, wd) ? "" : "off", s.id === selId ? 1000 : 0).addTo(layers.pins);
+    m.bindTooltip(h(s.addr), { direction: "top", offset: [0, -12] });
+    m.on("click", () => { if (selId && selId !== s.id) moveAfter(selId, s.id); else select(s.id === selId ? null : s.id, true); });
+  });
+  $("#sheet").innerHTML = `<p class="muted" style="margin:0"><b>调整顺序</b>：拖右边的行；或者先点一站（行或地图上的点，变橙色），再点地图上另一站 → 移到它后面（点「取」= 移到第一站）。
+    虚线 = 顺序改过、还没有步行路线的段。改完自动同步到手机。</p>`;
+  if (fit) map.fitBounds(L.latLngBounds(rs.map((s) => s.ll)), { padding: [30, 30] });  // 不含终点（常在很远的地方）
+}
+function select(id, fromMap) {
+  selId = id; renderRoute();
+  if (id && fromMap) document.querySelector(`#list .li[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  if (id && !fromMap && map && mapOn()) { const s = district(cur).stops.find((x) => x.id === id); if (s && !map.getBounds().pad(-0.1).contains(s.ll)) map.panTo(s.ll); }
 }
 function renderMap(d, wd, pr, todays, c, ci, fit) {
   layers.all.clearLayers(); layers.leg.clearLayers(); layers.pins.clearLayers();
+  if (sorting) return renderSortMap(d, fit);
   L.polyline(d.legs.flat(), { color: "#6b7280", weight: 4, opacity: .35 }).addTo(layers.all);
-  const pin = (ll, txt, cls, z) => L.marker(ll, { icon: L.divIcon({ className: "", html: `<div class="pin ${cls}">${txt}</div>`, iconSize: [0, 0] }), zIndexOffset: z || 0, keyboard: false });
   pin(d.end.ll, "终", "end").addTo(layers.pins);
   todays.forEach((s) => { const m = pin(s.ll, stopNo(todays, s), s === c ? "cur" : pr.done.includes(s.id) || (s.pick && pr.done.length) ? "done" : s.pick ? "pick" : "", s === c ? 1000 : 0).addTo(layers.pins); m.on("click", () => { pr.cur = s.id; setProg(cur, pr); renderRoute(); }); });
   if (me) me.addTo(layers.pins);
@@ -400,7 +453,7 @@ function nearestOn(pts, p) {
 }
 const pathLen = (pts) => pts.slice(1).reduce((s, x, i) => s + dist(pts[i], x), 0);
 function drawLeg() {
-  if (!cur || view !== "map" || !map) return;
+  if (!cur || !mapOn() || !map || sorting) return;
   const { d, todays, c, ci } = state();
   layers.leg.clearLayers(); legM = null;
   if (wday() === 0) return;
@@ -432,12 +485,12 @@ async function fetchLive(key, g, t) {
 }
 // 送达 / 跳过之后不改缩放：下一站还在屏幕里就不动，跑出去了才平移过去
 function keepView() {
-  if (!cur || view !== "map") return;
+  if (!cur || !mapOn() || sorting) return;
   const { d, c } = state(), ll = c ? c.ll : d.end.ll;
   if (!map.getBounds().pad(-0.15).contains(ll)) map.panTo(ll);
 }
 function fitCur() {
-  if (!cur || view !== "map") return;
+  if (!cur || !mapOn() || sorting) return;
   const { d, todays, c, ci } = state();
   const pts = [c ? c.ll : d.end.ll, ci > 0 ? todays[ci - 1].ll : d.pickup.ll];
   if (gps) pts.push([gps.lat, gps.lon]);
@@ -529,17 +582,62 @@ async function uploadLogs() {
 window.addEventListener("online", () => uploadSoon(1000));
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && dirtyDays().length) uploadSoon(1000); });
 
+// ---------- 本机修改同步（电脑上调顺序 ↔ 手机） ----------
+// 整份 patch 用解锁密码加密（AES-GCM）后存到同一个 Worker 的 KV；谁最后改谁算（patchT = 最后修改时间）。
+// 改了 2 秒后上传；打开 App、切回来、开着的时候每 15 秒看一下云上有没有更新的。写入要密码派生的口令，云上只有密文。
+const SYNC_URL = "https://songbao-log.snipperxx.workers.dev/patch";
+let patchT = LS.get("patchT", Object.keys(patch).length ? 1 : 0), syncT = LS.get("syncT", 0), pushTimer = null, syncC = null;
+const b64e = (u) => { let s = ""; for (let i = 0; i < u.length; i += 8192) s += String.fromCharCode(...u.subarray(i, i + 8192)); return btoa(s); };
+async function syncCrypto() {
+  const pw = LS.get("pw", null); if (!pw) throw new Error("没解锁");
+  if (syncC && syncC.pw === pw) return syncC;
+  const te = new TextEncoder(), k0 = await crypto.subtle.importKey("raw", te.encode(pw), "PBKDF2", false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey({ name: "PBKDF2", salt: te.encode("songbao-patch-v1"), iterations: 200000, hash: "SHA-256" }, k0, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  const tok = [...new Uint8Array(await crypto.subtle.digest("SHA-256", te.encode("songbao-write|" + pw)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return (syncC = { pw, key, tok });
+}
+function pushSoon(ms = 2000) { clearTimeout(pushTimer); pushTimer = setTimeout(pushPatch, ms); }
+async function pushPatch() {
+  if (!base || patchT <= syncT) return;
+  try {
+    const { key, tok } = await syncCrypto(), t = patchT, iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(patch))));
+    const r = await fetch(SYNC_URL, { method: "PUT", headers: { "Content-Type": "application/json", "X-Write": tok }, body: JSON.stringify({ t, dev: devId, iv: b64e(iv), ct: b64e(ct) }) });
+    if (r.status === 409) { LS.del("syncErr"); return pullPatch(); }  // 另一台设备改得更晚
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    syncT = t; LS.set("syncT", syncT); LS.del("syncErr");
+  } catch (e) { LS.set("syncErr", String(e.message || e)); pushSoon(30000); }
+}
+async function pullPatch() {
+  if (!base || !LS.get("pw", null)) return;
+  try {
+    const r = await fetch(SYNC_URL + "?t=" + Date.now(), { cache: "no-store" }); if (!r.ok) return;
+    const c = await r.json();
+    if (c.t && c.t > patchT) {
+      const { key } = await syncCrypto();
+      const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(c.iv) }, key, b64(c.ct));
+      patch = JSON.parse(new TextDecoder().decode(pt)); LS.set("patch", patch);
+      patchT = syncT = c.t; LS.set("patchT", patchT); LS.set("syncT", syncT); undoStack = [];
+      render(); toast("顺序 / 修改已从另一台设备同步过来");
+    } else if (patchT > (c.t || 0)) { syncT = Math.min(syncT, c.t || 0); pushSoon(500); }  // 本机的更新 → 传上去
+  } catch (e) {}
+}
+setInterval(() => { if (document.visibilityState === "visible") pullPatch(); }, 15000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pullPatch(); });
+
 // ---------- 列表 ----------
 function renderList(d, wd, pr, todays, c) {
   $("#lHide").textContent = hideDone ? "显示已送" : "隐藏已送";
   $("#lAll").textContent = showAll || sorting ? "只看今天送的" : "显示今天不送的";
   $("#lSort").textContent = sorting ? "排好了" : "调整顺序";
   const items = (showAll || sorting ? d.stops : todays).filter((s) => sorting || !hideDone || !pr.done.includes(s.id));
+  const rIdx = Object.fromEntries(real(d.stops).map((s, i) => [s.id, i + 1]));  // 调整顺序时用全区编号（和地图上的点一样）
+  $("#list").classList.toggle("sorting", sorting);
   $("#list").innerHTML = items.map((s) => {
     const k = todays.indexOf(s), on = k >= 0, done = pr.done.includes(s.id);
     const rs = s.r.filter((r) => (on ? recToday(r, wd) : true));
-    return `<div class="li ${done ? "isdone" : ""} ${s === c ? "iscur" : ""} ${on ? "" : "nottoday"}" data-id="${h(s.id)}">
-      <div class="in"><span class="k">${on ? stopNo(todays, s) : "–"}</span><div class="body"><div class="a">${h(s.addr)}</div>
+    return `<div class="li ${done ? "isdone" : ""} ${s === c && !sorting ? "iscur" : ""} ${on ? "" : "nottoday"} ${sorting && s.id === selId ? "sel" : ""}" data-id="${h(s.id)}" draggable="${sorting && !s.pick}">
+      <div class="in"><span class="k">${sorting ? (s.pick ? "取" : rIdx[s.id]) : on ? stopNo(todays, s) : "–"}</span><div class="body"><div class="a">${h(s.addr)}${sorting && !on && !s.pick ? `<span class="nt">今天不送</span>` : ""}</div>
       ${rs.map((r) => `<div class="muted"><span class="pp ${PAPERS.includes(r.paper) ? h(r.paper) : "X"}" style="font-size:11px;min-width:30px">${h(r.paper)}</span>${r.n > 1 ? ` <span class="cnt">×${r.n}</span>` : ""} ${h(r.name)}${on ? "" : ` · ${dayTxt(r)}`}${r.note ? ` <span style="color:var(--warn)">${h(r.note)}</span>` : ""}</div>`).join("")}</div>
       ${s.pick ? (sorting ? "" : on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : "") : sorting ? `<div class="mv"><button data-up>↑</button><button data-down>↓</button></div>` : `${on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : ""}<button class="ed" data-ed>✎</button>`}</div></div>`;
   }).join("") || `<p class="muted" style="text-align:center">没有要显示的站</p>`;
@@ -554,16 +652,38 @@ function renderList(d, wd, pr, todays, c) {
       setProg(cur, pr); if (navigator.vibrate) navigator.vibrate(30); renderRoute();
     });
     if (!sorting && todays.some((s) => s.id === id)) li.querySelector(".in").addEventListener("click", () => { const pr = prog(cur); pr.cur = id; setProg(cur, pr); follow = true; setView("map"); });
+    if (sorting && id !== "@pick") {
+      li.querySelector(".in").addEventListener("click", () => select(selId === id ? null : id));
+      // 拖动（电脑鼠标）：放在目标行的上半 → 插到它前面，下半 → 插到它后面
+      li.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; li.classList.add("dragging"); });
+      li.addEventListener("dragend", () => li.classList.remove("dragging"));
+      li.addEventListener("dragover", (e) => { e.preventDefault(); const r = li.getBoundingClientRect(), up = e.clientY < r.top + r.height / 2; li.classList.toggle("dropB", up); li.classList.toggle("dropA", !up); });
+      li.addEventListener("dragleave", () => li.classList.remove("dropB", "dropA"));
+      li.addEventListener("drop", (e) => {
+        e.preventDefault(); const from = e.dataTransfer.getData("text/plain"), up = li.classList.contains("dropB"); li.classList.remove("dropB", "dropA");
+        if (!from || from === id) return;
+        const ids = real(district(cur).stops).map((s) => s.id).filter((x) => x !== from);
+        ids.splice(ids.indexOf(id) + (up ? 0 : 1), 0, from); selId = from; setOrder(ids);
+      });
+    }
   });
 }
 $("#lHide").onclick = () => { hideDone = !hideDone; LS.set("hideDone", hideDone); renderRoute(); };
-$("#lAll").onclick = () => { if (sorting) sorting = false; else showAll = !showAll; renderRoute(); };
-$("#lSort").onclick = () => { sorting = !sorting; renderRoute(); };
+$("#lAll").onclick = () => { if (sorting) sorting = false; else showAll = !showAll; renderRoute(true); };
+$("#lSort").onclick = () => { sorting = !sorting; selId = null; renderRoute(true); };
 $("#lAdd").onclick = () => addStop();
+$("#lUndo").onclick = () => { const o = undoStack.pop(); if (o === undefined) return; P(cur).order = o; savePatch(); renderRoute(); };
+$("#lReset").onclick = () => { if (!confirm("放弃这个区所有手动调过的顺序，回到 Claude 排的原顺序？")) return; undoStack.push(P(cur).order); P(cur).order = null; savePatch(); renderRoute(); };
+function setOrder(ids) { undoStack.push(P(cur).order); P(cur).order = ids; savePatch(); renderRoute(); }
 function move(id, dir) {
   const d = district(cur), ids = real(d.stops).map((s) => s.id), i = ids.indexOf(id), j = i + dir;
   if (j < 0 || j >= ids.length) return;
-  [ids[i], ids[j]] = [ids[j], ids[i]]; P(cur).order = ids; savePatch(); renderRoute();
+  [ids[i], ids[j]] = [ids[j], ids[i]]; setOrder(ids);
+}
+// 把 id 挪到 after 后面（after = "@pick" → 第一站）
+function moveAfter(id, after) {
+  const ids = real(district(cur).stops).map((s) => s.id).filter((x) => x !== id);
+  ids.splice(after === "@pick" ? 0 : ids.indexOf(after) + 1, 0, id); setOrder(ids);
 }
 
 // ---------- 编辑 ----------
@@ -613,7 +733,7 @@ $("#eSave").onclick = () => {
   if (!s.addr) return toast("地址不能空");
   if (s._new) { if (!s.ll) return toast("先定一个位置"); delete s._new; p.add[s.id] = { stop: s, after: s._after || null }; delete s._after; }
   else { delete s._new; if (district(cur).stops.find((x) => x.id === s.id)?.addr !== s.addr) delete s.q; if (p.add[s.id]) p.add[s.id].stop = s; else p.stops[s.id] = s; }
-  savePatch(); $("#dEdit").close(); renderRoute(); toast("已保存（只在这台手机上）");
+  savePatch(); $("#dEdit").close(); renderRoute(); toast("已保存（会同步到你的其他设备）");
 };
 $("#eDel").onclick = () => {
   if (!confirm("删除这一站？")) return; const p = P(cur), id = editing.id;
@@ -668,7 +788,7 @@ async function shareText(title, t) {
 $("#btnSet").onclick = () => {
   const n = Object.values(patch).reduce((a, p) => a + Object.keys(p.stops || {}).length + Object.keys(p.add || {}).length + Object.keys(p.del || {}).length + (p.order ? 1 : 0), 0);
   $("#sBody").innerHTML = `<p>数据版本：<b>${h(base.v)}</b></p><button id="sUpd" style="width:100%">检查更新</button>
-    <p>本机修改：<b>${n}</b> 处<br><span class="muted">调顺序、改份数这些只存在这台手机上。发给 Claude 后它会并进正式数据，下次更新就都有了。</span></p>
+    <p>本机修改：<b>${n}</b> 处<br><span class="muted">调顺序、改份数这些会加密同步到你的其他设备（电脑 / 手机，用同一个密码解锁的）。Claude 也能读到，会并进正式数据。</span><br><span class="muted">同步：<b id="sSyncSt"></b></span></p>
     <button id="sExp" class="pri" style="width:100%">导出本机修改${reports.length ? `和 ${reports.length} 条报告` : ""}（复制 / 分享）</button>
     <p>计时上传：<b id="sLogSt"></b><br><span class="muted">每次取报/送达的时间（和位置）会自动传到云上，Claude 能读到，用来分析。</span></p>
     <div class="row3"><button id="sLogOn"></button><button id="sLogNow">立即上传</button></div>
@@ -681,11 +801,12 @@ $("#btnSet").onclick = () => {
     $("#sLogOn").textContent = logOn ? "关闭自动上传" : "开启自动上传";
   };
   logSt();
+  { const e = LS.get("syncErr", null); $("#sSyncSt").textContent = e ? "失败（" + e + "），会重试" : patchT > syncT ? "等待上传" : syncT ? "已同步 " + new Date(syncT).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "还没有修改"; }
   $("#sLogOn").onclick = () => { logOn = !logOn; LS.set("logUpload", logOn); if (logOn) uploadSoon(500); logSt(); };
   $("#sLogNow").onclick = async () => { markDirty(logDay()); const was = logOn; logOn = true; await uploadLogs(); logOn = was; logSt(); toast(LS.get("logErr", null) ? "上传失败" : "已上传"); };
   $("#sUpd").onclick = () => checkUpdate(true);
   $("#sExp").onclick = () => shareText("送报路线修改", reports.length ? reportText() : JSON.stringify({ app: "送报路线", v: base.v, patch }, null, 1));
-  $("#sReset").onclick = () => { if (confirm("清除这台手机上的所有修改？")) { patch = {}; savePatch(); renderHome(); $("#dSet").close(); } };
+  $("#sReset").onclick = () => { if (confirm("清除所有修改？（同步的其他设备也会一起清掉）")) { patch = {}; savePatch(); renderHome(); $("#dSet").close(); } };
   $("#sProg").onclick = () => { if (confirm("清空这一天的送达记录？")) { base.districts.forEach((d) => LS.del(progKey(d.id))); renderHome(); $("#dSet").close(); } };
   $("#sLock").onclick = () => { if (confirm("忘记密码？下次打开要重新输入。")) { LS.del("pw"); location.reload(); } };
   $("#dSet").showModal();
@@ -702,8 +823,8 @@ function startGPS() {
     const ll = [gps.lat, gps.lon];
     if (!me) me = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="me"><i class="ar"></i></div>', iconSize: [0, 0] }), zIndexOffset: 2000, interactive: false });
     me.setLatLng(ll); if (map && !layers.pins.hasLayer(me)) me.addTo(layers.pins); drawArrow();
-    drawLeg(); updDist(); if (follow && view === "map" && !startGPS.fitted) { startGPS.fitted = true; fitCur(); }
-    else if (follow && view === "map" && map && !map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll);  // 跟随模式：我走出屏幕就跟过去（不改缩放）
+    drawLeg(); updDist(); if (follow && mapOn() && !sorting && !startGPS.fitted) { startGPS.fitted = true; fitCur(); }
+    else if (follow && mapOn() && !sorting && map && !map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll);  // 跟随模式：我走出屏幕就跟过去（不改缩放）
   }, () => toast("没有定位权限：地图上不显示你的位置"), { enableHighAccuracy: true, maximumAge: 3000 });
 }
 function dist(a, b) { const R = 6371000, r = Math.PI / 180, x = (b[1] - a[1]) * r * Math.cos(((a[0] + b[0]) / 2) * r), y = (b[0] - a[0]) * r; return Math.hypot(x, y) * R; }
@@ -730,7 +851,7 @@ if ("serviceWorker" in navigator) {
 }
 (async () => {
   if (base) goHome();
-  await checkUpdate();
+  await checkUpdate(); pullPatch();
   if (!base && !$("#unlock").classList.contains("hide")) return;
   if (!base) { $("#unlock").classList.remove("hide"); $("#pwerr").textContent = "第一次使用要联网下载数据"; }
 })();
