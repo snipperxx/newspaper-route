@@ -62,6 +62,11 @@ header button{padding:6px 10px}
 .pp.BI{background:#0d9488}.pp.HDB{background:#92400e}.pp.NZZ{background:#b91c1c}.pp.WLT,.pp.WES{background:#0891b2}.pp.X{background:#4b5563}
 .cnt{font-weight:800;color:var(--warn)}
 .tag{font-size:12px;border:1px solid var(--mute);color:var(--mute);border-radius:4px;padding:0 4px}
+/* 投诉过的客户：黄色 ⚠（名单、当前站、地图上的点） */
+.cpl{display:inline-block;font-size:12px;font-weight:700;background:#facc15;color:#422006;border-radius:4px;padding:0 5px;margin-left:4px}
+.li.flagged{border-left:5px solid #facc15}
+.pin.flag{position:relative;box-shadow:0 0 0 3px #facc15,0 1px 3px #0006}
+.pin.flag::after{content:"!";position:absolute;right:-9px;top:-9px;width:16px;height:16px;border-radius:50%;background:#facc15;color:#422006;border:1px solid #422006;font:900 12px/16px system-ui}
 .other{color:var(--mute);font-size:13px;margin-top:6px}
 .done-btn{display:block;width:100%;height:56px;border-radius:28px;background:var(--ok);border-color:var(--ok);color:#fff;font-size:18px;font-weight:700;letter-spacing:1px;margin:12px 0 8px;touch-action:manipulation}
 .done-btn:active{filter:brightness(.85)}
@@ -267,6 +272,10 @@ const stopNo = (todays, s) => (s.pick ? "取" : todays.indexOf(s) + (todays[0]?.
 const wday = () => date.getDay(); // 0 = 周日
 const recToday = (r, wd) => !r.paused && r.days.includes(wd);
 const stopToday = (s, wd) => s.r.some((r) => recToday(r, wd));
+// 投诉过的客户：数据里的 flags 只在 from–to 这几天显示；按站 id + 名字片段对上，站在手机上改过也对得上
+const flagOf = (d, s, r) => (d.flags || []).find((f) => f.stop === s.id && r.name.includes(f.match) && (!f.from || f.from <= iso(date)) && (!f.to || iso(date) <= f.to));
+const stopFlag = (d, s, wd) => s.r.some((r) => recToday(r, wd) && flagOf(d, s, r));
+const flagHTML = (f) => (f ? `<span class="cpl">⚠ ${h(f.text)}</span>` : "");
 function activeOn(d) { const t = iso(date); return (!d.from || d.from <= t) && (!d.to || t <= d.to); }
 const progKey = (id) => "prog." + iso(date) + "." + id;
 const prog = (id) => LS.get(progKey(id), { done: [], cur: null, t0: null, t1: null });
@@ -425,7 +434,7 @@ function renderSortMap(d, fit) {
   pin(d.end.ll, "终", "end").addTo(layers.pins);
   pin(d.pickup.ll, "取", "pick").addTo(layers.pins).on("click", () => { if (selId) moveAfter(selId, "@pick"); });
   rs.forEach((s, i) => {
-    const m = pin(s.ll, i + 1, s.id === selId ? "sel" : stopToday(s, wd) ? "" : "off", s.id === selId ? 1000 : 0).addTo(layers.pins);
+    const m = pin(s.ll, i + 1, (s.id === selId ? "sel" : stopToday(s, wd) ? "" : "off") + (stopFlag(d, s, wd) ? " flag" : ""), s.id === selId ? 1000 : 0).addTo(layers.pins);
     m.bindTooltip(h(s.addr), { direction: "top", offset: [0, -12] });
     m.on("click", () => { if (selId && selId !== s.id) moveAfter(selId, s.id); else select(s.id === selId ? null : s.id, true); });
   });
@@ -443,7 +452,7 @@ function renderMap(d, wd, pr, todays, c, ci, fit) {
   if (sorting) return renderSortMap(d, fit);
   L.polyline(d.legs.flat(), { color: "#6b7280", weight: 4, opacity: .35 }).addTo(layers.all);
   pin(d.end.ll, "终", "end").addTo(layers.pins);
-  todays.forEach((s) => { const m = pin(s.ll, stopNo(todays, s), s === c ? "cur" : pr.done.includes(s.id) || (s.pick && pr.done.length) ? "done" : s.pick ? "pick" : "", s === c ? 1000 : 0).addTo(layers.pins); m.on("click", () => { pr.cur = s.id; setProg(cur, pr); renderRoute(); }); });
+  todays.forEach((s) => { const m = pin(s.ll, stopNo(todays, s), (s === c ? "cur" : pr.done.includes(s.id) || (s.pick && pr.done.length) ? "done" : s.pick ? "pick" : "") + (stopFlag(d, s, wd) ? " flag" : ""), s === c ? 1000 : 0).addTo(layers.pins); m.on("click", () => { pr.cur = s.id; setProg(cur, pr); renderRoute(); }); });
   if (me) me.addTo(layers.pins);
   renderSheet(d, wd, pr, todays, c, ci);
   drawLeg();
@@ -507,9 +516,9 @@ function fitCur() {
   if (gps) pts.push([gps.lat, gps.lon]);
   map.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 18 });
 }
-function recHTML(r, wd) {
+function recHTML(r, wd, f) {
   return `<div class="rec"><span class="pp ${PAPERS.includes(r.paper) ? h(r.paper) : "X"}">${h(r.paper)}</span>${r.n > 1 ? `<span class="cnt">×${r.n}</span>` : ""}
-    <span class="nm">${h(r.name)} ${r.tag ? `<span class="tag">${h(r.tag)}</span>` : ""}${r.note ? `<span class="note">${h(r.note)}</span>` : ""}</span></div>`;
+    <span class="nm">${h(r.name)}${flagHTML(f)} ${r.tag ? `<span class="tag">${h(r.tag)}</span>` : ""}${r.note ? `<span class="note">${h(r.note)}</span>` : ""}</span></div>`;
 }
 const dayTxt = (r) => (r.paused ? "停送" : r.days.length === 6 ? "每天" : "只周" + r.days.map((x) => WD[x]).join(""));
 function renderSheet(d, wd, pr, todays, c, ci) {
@@ -527,7 +536,7 @@ function renderSheet(d, wd, pr, todays, c, ci) {
   }
   const rt = c.r.filter((r) => recToday(r, wd)), ro = c.r.filter((r) => !recToday(r, wd));
   el.innerHTML = `<div class="addr"><span class="n">${stopNo(todays, c)}</span><span style="flex:1">${c.pick ? "取报点 " : ""}${h(c.addr)}</span><span id="dist" class="dist"></span>${c.pick ? "" : `<button class="ed" id="bEd" style="padding:4px 10px">✎</button>`}</div>
-    ${rt.map((r) => recHTML(r, wd)).join("")}
+    ${rt.map((r) => recHTML(r, wd, flagOf(d, c, r))).join("")}
     ${ro.length ? `<div class="other">今天不送：${ro.map((r) => `${h(r.name)}（${h(r.paper)}，${dayTxt(r)}）`).join("；")}</div>` : ""}
     <button class="done-btn" id="bDone">${c.pick ? "✓ 已取报" : "✓ 已送达"}</button>
     <div class="row3"><button id="bPrev" ${ci === 0 ? "disabled" : ""}>◀ 上一站</button><button id="bSkip">跳过 ▶</button><button id="bNav">导航</button><button id="bRep">⚠ 报告</button></div>`;
@@ -647,9 +656,9 @@ function renderList(d, wd, pr, todays, c) {
   $("#list").innerHTML = items.map((s) => {
     const k = todays.indexOf(s), on = k >= 0, done = pr.done.includes(s.id);
     const rs = s.r.filter((r) => (on ? recToday(r, wd) : true));
-    return `<div class="li ${done ? "isdone" : ""} ${s === c && !sorting ? "iscur" : ""} ${on ? "" : "nottoday"} ${sorting && s.id === selId ? "sel" : ""}" data-id="${h(s.id)}" draggable="${sorting && !s.pick}">
+    return `<div class="li ${done ? "isdone" : ""} ${s === c && !sorting ? "iscur" : ""} ${on ? "" : "nottoday"} ${sorting && s.id === selId ? "sel" : ""} ${on && stopFlag(d, s, wd) ? "flagged" : ""}" data-id="${h(s.id)}" draggable="${sorting && !s.pick}">
       <div class="in"><span class="k">${sorting ? (s.pick ? "取" : rIdx[s.id]) : on ? stopNo(todays, s) : "–"}</span><div class="body"><div class="a">${h(s.addr)}${sorting && !on && !s.pick ? `<span class="nt">今天不送</span>` : ""}</div>
-      ${rs.map((r) => `<div class="muted"><span class="pp ${PAPERS.includes(r.paper) ? h(r.paper) : "X"}" style="font-size:11px;min-width:30px">${h(r.paper)}</span>${r.n > 1 ? ` <span class="cnt">×${r.n}</span>` : ""} ${h(r.name)}${on ? "" : ` · ${dayTxt(r)}`}${r.note ? ` <span style="color:var(--warn)">${h(r.note)}</span>` : ""}</div>`).join("")}</div>
+      ${rs.map((r) => `<div class="muted"><span class="pp ${PAPERS.includes(r.paper) ? h(r.paper) : "X"}" style="font-size:11px;min-width:30px">${h(r.paper)}</span>${r.n > 1 ? ` <span class="cnt">×${r.n}</span>` : ""} ${h(r.name)}${on ? flagHTML(flagOf(d, s, r)) : ` · ${dayTxt(r)}`}${r.note ? ` <span style="color:var(--warn)">${h(r.note)}</span>` : ""}</div>`).join("")}</div>
       ${s.pick ? (sorting ? "" : on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : "") : sorting ? `<div class="mv"><button data-up>↑</button><button data-down>↓</button></div>` : `${on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : ""}<button class="ed" data-ed>✎</button>`}</div></div>`;
   }).join("") || `<p class="muted" style="text-align:center">没有要显示的站</p>`;
   $("#list").querySelectorAll(".li").forEach((li) => {
