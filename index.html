@@ -88,6 +88,7 @@ header button{padding:6px 10px}
 .listtools{display:flex;gap:8px;padding:8px 10px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
 .listtools button{padding:6px 10px;font-size:14px}
 .mv{display:flex;flex-direction:column;gap:4px}.mv button{padding:2px 10px}
+.mvn{width:64px;align-self:center;margin-right:6px;padding:6px 4px;text-align:center;font-size:15px;border:1px solid var(--line,#8886);border-radius:8px;background:transparent;color:inherit}
 /* 调整顺序：今天不送的站也能挪，不变灰；选中的站（点行或地图上的点）橙色；拖动时蓝线标插到哪 */
 #list.sorting .li.nottoday .in{opacity:1}
 #list.sorting .li.nottoday .a{color:var(--mute)}
@@ -659,11 +660,17 @@ function renderList(d, wd, pr, todays, c) {
     return `<div class="li ${done ? "isdone" : ""} ${s === c && !sorting ? "iscur" : ""} ${on ? "" : "nottoday"} ${sorting && s.id === selId ? "sel" : ""} ${on && stopFlag(d, s, wd) ? "flagged" : ""}" data-id="${h(s.id)}" draggable="${sorting && !s.pick}">
       <div class="in"><span class="k">${sorting ? (s.pick ? "取" : rIdx[s.id]) : on ? stopNo(todays, s) : "–"}</span><div class="body"><div class="a">${h(s.addr)}${sorting && !on && !s.pick ? `<span class="nt">今天不送</span>` : ""}</div>
       ${rs.map((r) => `<div class="muted"><span class="pp ${PAPERS.includes(r.paper) ? h(r.paper) : "X"}" style="font-size:11px;min-width:30px">${h(r.paper)}</span>${r.n > 1 ? ` <span class="cnt">×${r.n}</span>` : ""} ${h(r.name)}${on ? flagHTML(flagOf(d, s, r)) : ` · ${dayTxt(r)}`}${r.note ? ` <span style="color:var(--warn)">${h(r.note)}</span>` : ""}</div>`).join("")}</div>
-      ${s.pick ? (sorting ? "" : on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : "") : sorting ? `<div class="mv"><button data-up>↑</button><button data-down>↓</button></div>` : `${on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : ""}<button class="ed" data-ed>✎</button>`}</div></div>`;
+      ${s.pick ? (sorting ? "" : on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : "") : sorting ? `<input class="mvn" type="number" inputmode="numeric" min="1" placeholder="→第几" data-to><div class="mv"><button data-up>↑</button><button data-down>↓</button></div>` : `${on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : ""}<button class="ed" data-ed>✎</button>`}</div></div>`;
   }).join("") || `<p class="muted" style="text-align:center">没有要显示的站</p>`;
   $("#list").querySelectorAll(".li").forEach((li) => {
     const id = li.dataset.id;
     li.querySelector("[data-ed]")?.addEventListener("click", (e) => { e.stopPropagation(); openEdit(id); });
+    const mvn = li.querySelector("[data-to]");  // 直接输入想要的第几站，回车 / 点别处确认；原来在那里的站往后挤
+    if (mvn) {
+      mvn.draggable = false; mvn.addEventListener("click", (e) => e.stopPropagation());
+      mvn.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") mvn.blur(); });
+      mvn.addEventListener("change", () => { const n = Math.round(+mvn.value); if (n >= 1) moveTo(id, n); else mvn.value = ""; });
+    }
     li.querySelector("[data-up]")?.addEventListener("click", (e) => { e.stopPropagation(); move(id, -1); });
     li.querySelector("[data-down]")?.addEventListener("click", (e) => { e.stopPropagation(); move(id, 1); });
     li.querySelector("[data-ck]")?.addEventListener("click", (e) => {
@@ -699,6 +706,13 @@ function move(id, dir) {
   const d = district(cur), ids = real(d.stops).map((s) => s.id), i = ids.indexOf(id), j = i + dir;
   if (j < 0 || j >= ids.length) return;
   [ids[i], ids[j]] = [ids[j], ids[i]]; setOrder(ids);
+}
+// 把 id 变成全区第 n 站（和行 / 地图上的编号一样），原来占着的站往后挤；n 超过总数 = 最后一站
+function moveTo(id, n) {
+  const ids = real(district(cur).stops).map((s) => s.id).filter((x) => x !== id);
+  const k = Math.min(Math.max(n, 1), ids.length + 1) - 1;
+  if (real(district(cur).stops).map((s) => s.id).indexOf(id) === k) return renderRoute();
+  ids.splice(k, 0, id); selId = id; setOrder(ids); toast(`已移到第 ${k + 1} 站`);
 }
 // 把 id 挪到 after 后面（after = "@pick" → 第一站）
 function moveAfter(id, after) {
