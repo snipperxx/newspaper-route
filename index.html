@@ -88,6 +88,7 @@ header button{padding:6px 10px}
 .listtools{display:flex;gap:8px;padding:8px 10px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
 .listtools button{padding:6px 10px;font-size:14px}
 .mv{display:flex;flex-direction:column;gap:4px}.mv button{padding:2px 10px}
+.li.picked{opacity:.5;border-color:var(--ok)}
 .mvn{width:64px;align-self:center;margin-right:6px;padding:6px 4px;text-align:center;font-size:15px;border:1px solid var(--line,#8886);border-radius:8px;background:transparent;color:inherit}
 /* 调整顺序：今天不送的站也能挪，不变灰；选中的站（点行或地图上的点）橙色；拖动时蓝线标插到哪 */
 #list.sorting .li.nottoday .in{opacity:1}
@@ -165,7 +166,7 @@ input,select,textarea{font:inherit;width:100%;padding:8px 10px;border:1px solid 
     <div id="sheet"></div>
   </div>
   <div id="listView" class="hide" style="flex:1;display:flex;flex-direction:column;min-height:0">
-    <div class="listtools"><button id="lHide">隐藏已送</button><button id="lAll">显示今天不送的</button><button id="lSort">调整顺序</button><button id="lAdd">＋ 加一站</button><button id="lUndo" class="hide">↶ 撤销</button><button id="lReset" class="hide">恢复原顺序</button></div>
+    <div class="listtools"><button id="lHide">隐藏已送</button><button id="lAll">显示今天不送的</button><button id="lSort">调整顺序</button><button id="lRb" class="hide">从头排</button><button id="lRbU" class="hide">↶ 退一步</button><button id="lRbD" class="hide">完成</button><button id="lRbC" class="hide">放弃</button><button id="lAdd">＋ 加一站</button><button id="lUndo" class="hide">↶ 撤销</button><button id="lReset" class="hide">恢复原顺序</button></div>
     <div id="list"></div>
   </div>
   </div>
@@ -204,6 +205,7 @@ let patch = LS.get("patch", {});   // 手机上自己改的：{区: {order, stop
 let date = new Date(); date.setHours(12, 0, 0, 0);
 let cur = null;                    // 当前打开的区 id
 let view = "map", hideDone = LS.get("hideDone", false), showAll = false, sorting = false;
+let rebuild = null;  // 「从头排」：null = 没开；数组 = 已按先后点过的站 id
 let selId = null, undoStack = [];  // 调整顺序：选中的站、撤销用的旧顺序
 const wide = () => matchMedia("(min-width:900px)").matches;  // 电脑：地图和列表同时显示
 const mapOn = () => view === "map" || wide(), listOn = () => view === "list" || wide();
@@ -320,7 +322,7 @@ $("#dNext").onclick = () => { date.setDate(date.getDate() + 1); renderHome(); };
 let map, layers = {}, me = null, follow = true;
 function openDistrict(id) {
   cur = id; $("#home").classList.add("hide"); $("#route").classList.remove("hide");
-  selId = null; undoStack = []; if (wide()) sorting = true;  // 电脑上打开就是调整顺序
+  selId = null; undoStack = []; rebuild = null; if (wide()) sorting = true;  // 电脑上打开就是调整顺序
   if (!map) initMap();
   setView(view); requestWake(); startGPS();
   renderRoute(true);
@@ -418,7 +420,9 @@ function renderRoute(fit) {
   if (!cur) return;
   const { d, wd, pr, todays, c, ci } = state();
   $("#rTitle").textContent = d.title; $("#rProg").textContent = `${pr.done.filter((id) => real(todays).some((s) => s.id === id)).length}/${real(todays).length}`;
-  $("#lUndo").classList.toggle("hide", !sorting || !undoStack.length); $("#lReset").classList.toggle("hide", !sorting || !patch[cur]?.order);
+  if (!sorting) rebuild = null;
+  $("#lUndo").classList.toggle("hide", !sorting || rebuild || !undoStack.length); $("#lReset").classList.toggle("hide", !sorting || rebuild || !patch[cur]?.order);
+  $("#lRb").classList.toggle("hide", !sorting || !!rebuild); ["lRbU", "lRbD", "lRbC"].forEach((i) => $("#" + i).classList.toggle("hide", !rebuild));
   if (mapOn()) renderMap(d, wd, pr, todays, c, ci, fit);
   if (listOn()) renderList(d, wd, pr, todays, c);
 }
@@ -427,7 +431,10 @@ const pin = (ll, txt, cls, z) => L.marker(ll, { icon: L.divIcon({ className: "",
 // 相邻两站在原顺序里也相邻 → 用原来的步行路线，否则画虚直线（顺序改过的地方）
 function renderSortMap(d, fit) {
   const rs = real(d.stops), wd = wday(), ids = [d.stops[0].id, ...rs.map((s) => s.id)], lls = [d.pickup.ll, ...rs.map((s) => s.ll)];
-  for (let i = 0; i < ids.length; i++) {
+  if (rebuild) {  // 从头排：只连已经点过的站
+    const m = Object.fromEntries(rs.map((s) => [s.id, s.ll]));
+    L.polyline([d.pickup.ll, ...rebuild.map((id) => m[id])], { color: "#2563eb", weight: 3, opacity: .8, dashArray: "6 6" }).addTo(layers.all);
+  } else for (let i = 0; i < ids.length; i++) {
     const a = ids[i], b = ids[i + 1] || "@end", ib = b === "@end" ? d.legs.length - 1 : d.baseIdx[b], ia = a === "@pick" ? -1 : d.baseIdx[a];
     if (ia != null && ib === ia + 1 && d.legs[ib]) L.polyline(d.legs[ib], { color: "#2563eb", weight: 4, opacity: .7 }).addTo(layers.all);
     else L.polyline([lls[i], lls[i + 1] || d.end.ll], { color: "#2563eb", weight: 3, opacity: .8, dashArray: "6 6" }).addTo(layers.all);
@@ -435,11 +442,13 @@ function renderSortMap(d, fit) {
   pin(d.end.ll, "终", "end").addTo(layers.pins);
   pin(d.pickup.ll, "取", "pick").addTo(layers.pins).on("click", () => { if (selId) moveAfter(selId, "@pick"); });
   rs.forEach((s, i) => {
-    const m = pin(s.ll, i + 1, (s.id === selId ? "sel" : stopToday(s, wd) ? "" : "off") + (stopFlag(d, s, wd) ? " flag" : ""), s.id === selId ? 1000 : 0).addTo(layers.pins);
+    const rk = rebuild ? rebuild.indexOf(s.id) + 1 : 0;
+    const m = pin(s.ll, rebuild ? rk || "·" : i + 1, rebuild ? (rk ? "" : "off") + (stopFlag(d, s, wd) ? " flag" : "") : (s.id === selId ? "sel" : stopToday(s, wd) ? "" : "off") + (stopFlag(d, s, wd) ? " flag" : ""), s.id === selId ? 1000 : 0).addTo(layers.pins);
     m.bindTooltip(h(s.addr), { direction: "top", offset: [0, -12] });
-    m.on("click", () => { if (selId && selId !== s.id) moveAfter(selId, s.id); else select(s.id === selId ? null : s.id, true); });
+    m.on("click", () => { if (rebuild) rbPick(s.id); else if (selId && selId !== s.id) moveAfter(selId, s.id); else select(s.id === selId ? null : s.id, true); });
   });
-  $("#sheet").innerHTML = `<p class="muted" style="margin:0"><b>调整顺序</b>：拖右边的行；或者先点一站（行或地图上的点，变橙色），再点地图上另一站 → 移到它后面（点「取」= 移到第一站）。
+  if (rebuild) $("#sheet").innerHTML = `<p class="muted" style="margin:0"><b>从头排</b>：已排 ${rebuild.length}/${rs.length}。按送的先后，一站一站点（右边的行或地图上的点），点到的站编号 1、2、3…。点错了按「↶ 退一步」。「完成」= 已排的在前，没点的按原来的顺序接在后面；「放弃」= 什么都不改。排满会自动完成。</p>`;
+  else $("#sheet").innerHTML = `<p class="muted" style="margin:0"><b>调整顺序</b>：拖右边的行；或者先点一站（行或地图上的点，变橙色），再点地图上另一站 → 移到它后面（点「取」= 移到第一站）。
     虚线 = 顺序改过、还没有步行路线的段。改完自动同步到手机。转地图：右上 ⟲ ⟳，或按住右键拖动，或 Shift + 滚轮；红 ▲ 转回正北。</p>`;
   if (fit) map.fitBounds(L.latLngBounds(rs.map((s) => s.ll)), { padding: [30, 30] });  // 不含终点（常在很远的地方）
 }
@@ -657,10 +666,10 @@ function renderList(d, wd, pr, todays, c) {
   $("#list").innerHTML = items.map((s) => {
     const k = todays.indexOf(s), on = k >= 0, done = pr.done.includes(s.id);
     const rs = s.r.filter((r) => (on ? recToday(r, wd) : true));
-    return `<div class="li ${done ? "isdone" : ""} ${s === c && !sorting ? "iscur" : ""} ${on ? "" : "nottoday"} ${sorting && s.id === selId ? "sel" : ""} ${on && stopFlag(d, s, wd) ? "flagged" : ""}" data-id="${h(s.id)}" draggable="${sorting && !s.pick}">
-      <div class="in"><span class="k">${sorting ? (s.pick ? "取" : rIdx[s.id]) : on ? stopNo(todays, s) : "–"}</span><div class="body"><div class="a">${h(s.addr)}${sorting && !on && !s.pick ? `<span class="nt">今天不送</span>` : ""}</div>
+    return `<div class="li ${done ? "isdone" : ""} ${s === c && !sorting ? "iscur" : ""} ${on ? "" : "nottoday"} ${sorting && !rebuild && s.id === selId ? "sel" : ""} ${rebuild && rebuild.includes(s.id) ? "picked" : ""} ${on && stopFlag(d, s, wd) ? "flagged" : ""}" data-id="${h(s.id)}" draggable="${sorting && !s.pick && !rebuild}">
+      <div class="in"><span class="k">${rebuild ? (s.pick ? "取" : rebuild.indexOf(s.id) + 1 || "–") : sorting ? (s.pick ? "取" : rIdx[s.id]) : on ? stopNo(todays, s) : "–"}</span><div class="body"><div class="a">${h(s.addr)}${sorting && !on && !s.pick ? `<span class="nt">今天不送</span>` : ""}</div>
       ${rs.map((r) => `<div class="muted"><span class="pp ${PAPERS.includes(r.paper) ? h(r.paper) : "X"}" style="font-size:11px;min-width:30px">${h(r.paper)}</span>${r.n > 1 ? ` <span class="cnt">×${r.n}</span>` : ""} ${h(r.name)}${on ? flagHTML(flagOf(d, s, r)) : ` · ${dayTxt(r)}`}${r.note ? ` <span style="color:var(--warn)">${h(r.note)}</span>` : ""}</div>`).join("")}</div>
-      ${s.pick ? (sorting ? "" : on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : "") : sorting ? `<input class="mvn" type="number" inputmode="numeric" min="1" placeholder="→第几" data-to><div class="mv"><button data-up>↑</button><button data-down>↓</button></div>` : `${on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : ""}<button class="ed" data-ed>✎</button>`}</div></div>`;
+      ${s.pick ? (sorting ? "" : on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : "") : sorting ? (rebuild ? "" : `<input class="mvn" type="number" inputmode="numeric" min="1" placeholder="→第几" data-to><div class="mv"><button data-up>↑</button><button data-down>↓</button></div>`) : `${on ? `<button class="ck ${done ? "on" : ""}" data-ck>${done ? "↩" : "✓"}</button>` : ""}<button class="ed" data-ed>✎</button>`}</div></div>`;
   }).join("") || `<p class="muted" style="text-align:center">没有要显示的站</p>`;
   $("#list").querySelectorAll(".li").forEach((li) => {
     const id = li.dataset.id;
@@ -680,7 +689,7 @@ function renderList(d, wd, pr, todays, c) {
     });
     if (!sorting && todays.some((s) => s.id === id)) li.querySelector(".in").addEventListener("click", () => { const pr = prog(cur); pr.cur = id; setProg(cur, pr); follow = true; setView("map"); });
     if (sorting && id !== "@pick") {
-      li.querySelector(".in").addEventListener("click", () => select(selId === id ? null : id));
+      li.querySelector(".in").addEventListener("click", () => { if (rebuild) rbPick(id); else select(selId === id ? null : id); });
       // 拖动（电脑鼠标）：放在目标行的上半 → 插到它前面，下半 → 插到它后面
       li.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; li.classList.add("dragging"); });
       li.addEventListener("dragend", () => li.classList.remove("dragging"));
@@ -701,6 +710,25 @@ $("#lSort").onclick = () => { sorting = !sorting; selId = null; renderRoute(true
 $("#lAdd").onclick = () => addStop();
 $("#lUndo").onclick = () => { const o = undoStack.pop(); if (o === undefined) return; P(cur).order = o; savePatch(); renderRoute(); };
 $("#lReset").onclick = () => { if (!confirm("放弃这个区所有手动调过的顺序，回到 Claude 排的原顺序？")) return; undoStack.push(P(cur).order); P(cur).order = null; savePatch(); renderRoute(); };
+// ---- 从头排：全部先算「没排」，按送的先后一站一站点 ----
+$("#lRb").onclick = () => { rebuild = []; selId = null; renderRoute(true); toast("从头排：按送的先后，一站一站点"); };
+$("#lRbU").onclick = () => { if (rebuild?.length) { rebuild.pop(); renderRoute(); } };
+$("#lRbC").onclick = () => { rebuild = null; renderRoute(); toast("已放弃，顺序没改"); };
+$("#lRbD").onclick = () => rbDone();
+function rbPick(id) {
+  if (!rebuild || id === "@pick") return;
+  if (rebuild.includes(id)) return toast("这一站已经排过了（点错了按「退一步」）");
+  rebuild.push(id);
+  if (rebuild.length >= real(district(cur).stops).length) return rbDone();
+  renderRoute();
+}
+function rbDone() {
+  if (!rebuild) return;
+  if (!rebuild.length) { rebuild = null; return renderRoute(); }
+  const n = rebuild.length, rest = real(district(cur).stops).map((s) => s.id).filter((x) => !rebuild.includes(x));
+  const ids = [...rebuild, ...rest]; rebuild = null; setOrder(ids);
+  toast(rest.length ? `已排 ${n} 站，其余 ${rest.length} 站按原顺序接在后面（可以「↶ 撤销」）` : "排好了（可以「↶ 撤销」）", 3500);
+}
 function setOrder(ids) { undoStack.push(P(cur).order); P(cur).order = ids; savePatch(); renderRoute(); }
 function move(id, dir) {
   const d = district(cur), ids = real(d.stops).map((s) => s.id), i = ids.indexOf(id), j = i + dir;
